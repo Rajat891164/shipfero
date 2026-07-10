@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.shipments.models import Shipment
+from core.utils import get_merchant
 
 from .models import NDR, NDRAction
 from .serializers import (
@@ -25,7 +26,7 @@ class NDRListView(generics.ListAPIView):
     ordering = ["-ndr_date"]
 
     def get_queryset(self):
-        merchant = self.request.user.merchant
+        merchant = get_merchant(self.request)
         qs = NDR.objects.filter(
             shipment__merchant=merchant
         ).select_related("shipment__carrier")
@@ -59,7 +60,7 @@ class NDRDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return NDR.objects.filter(
-            shipment__merchant=self.request.user.merchant
+            shipment__merchant=get_merchant(self.request)
         ).select_related("shipment__carrier").prefetch_related("actions")
 
 
@@ -71,7 +72,7 @@ class TakeNDRActionView(APIView):
         try:
             ndr = NDR.objects.select_related("shipment").get(
                 pk=pk,
-                shipment__merchant=request.user.merchant,
+                shipment__merchant=get_merchant(request),
             )
         except NDR.DoesNotExist:
             return Response({"detail": "NDR not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -128,7 +129,7 @@ class BulkNDRActionView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         ndrs = NDR.objects.filter(
             pk__in=data["ndr_ids"],
             shipment__merchant=merchant,
@@ -158,7 +159,7 @@ class NDRDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         ndrs = NDR.objects.filter(shipment__merchant=merchant)
 
         return Response({
