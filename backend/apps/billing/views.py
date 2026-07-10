@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from core.utils import get_merchant
 from .models import Wallet, WalletTransaction, Invoice
 from .serializers import (
     WalletSerializer,
@@ -19,7 +20,7 @@ class WalletView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        wallet, _ = Wallet.objects.get_or_create(merchant=request.user.merchant)
+        wallet, _ = Wallet.objects.get_or_create(merchant=get_merchant(request))
         serializer = WalletSerializer(wallet)
         return Response(serializer.data)
 
@@ -33,7 +34,7 @@ class AddFundsView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        wallet, _ = Wallet.objects.get_or_create(merchant=request.user.merchant)
+        wallet, _ = Wallet.objects.get_or_create(merchant=get_merchant(request))
 
         try:
             wallet.credit(
@@ -63,7 +64,7 @@ class TransactionListView(generics.ListAPIView):
     serializer_class = WalletTransactionSerializer
 
     def get_queryset(self):
-        wallet, _ = Wallet.objects.get_or_create(merchant=self.request.user.merchant)
+        wallet, _ = Wallet.objects.get_or_create(merchant=get_merchant(self.request))
         qs = wallet.transactions.all().order_by("-created_at")
         # Filter by type
         txn_type = self.request.query_params.get("type")
@@ -85,7 +86,7 @@ class TransactionDetailView(generics.RetrieveAPIView):
     serializer_class = WalletTransactionSerializer
 
     def get_queryset(self):
-        wallet, _ = Wallet.objects.get_or_create(merchant=self.request.user.merchant)
+        wallet, _ = Wallet.objects.get_or_create(merchant=get_merchant(self.request))
         return wallet.transactions.all()
 
 
@@ -97,7 +98,7 @@ class InvoiceListView(generics.ListAPIView):
     serializer_class = InvoiceSerializer
 
     def get_queryset(self):
-        qs = self.request.user.merchant.invoices.all().order_by("-invoice_date")
+        qs = get_merchant(self.request).invoices.all().order_by("-invoice_date")
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter.upper())
@@ -110,7 +111,7 @@ class InvoiceDetailView(generics.RetrieveAPIView):
     serializer_class = InvoiceSerializer
 
     def get_queryset(self):
-        return self.request.user.merchant.invoices.all()
+        return get_merchant(self.request).invoices.all()
 
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ class BillingSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         wallet, _ = Wallet.objects.get_or_create(merchant=merchant)
 
         # Transaction totals
