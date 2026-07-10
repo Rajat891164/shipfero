@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from core.utils import get_merchant
 from .models import ReportJob, ScheduledReport
 from .serializers import (
     ReportJobSerializer,
@@ -22,7 +23,7 @@ class GenerateReportView(APIView):
         data = serializer.validated_data
 
         job = ReportJob.objects.create(
-            merchant=request.user.merchant,
+            merchant=get_merchant(request),
             requested_by=request.user,
             report_type=data["report_type"],
             date_from=data.get("date_from"),
@@ -53,7 +54,7 @@ class ReportJobListView(generics.ListAPIView):
         # Return past 90 days of reports
         ninety_days_ago = timezone.now() - timezone.timedelta(days=90)
         return ReportJob.objects.filter(
-            merchant=self.request.user.merchant,
+            merchant=get_merchant(self.request),
             created_at__gte=ninety_days_ago
         ).order_by("-created_at")
 
@@ -64,7 +65,7 @@ class ReportJobStatusView(generics.RetrieveAPIView):
     serializer_class = ReportJobSerializer
 
     def get_queryset(self):
-        return ReportJob.objects.filter(merchant=self.request.user.merchant)
+        return ReportJob.objects.filter(merchant=get_merchant(self.request))
 
 
 class ScheduledReportListCreateView(generics.ListCreateAPIView):
@@ -76,10 +77,10 @@ class ScheduledReportListCreateView(generics.ListCreateAPIView):
     serializer_class = ScheduledReportSerializer
 
     def get_queryset(self):
-        return ScheduledReport.objects.filter(merchant=self.request.user.merchant)
+        return ScheduledReport.objects.filter(merchant=get_merchant(self.request))
 
     def perform_create(self, serializer):
-        serializer.save(merchant=self.request.user.merchant)
+        serializer.save(merchant=get_merchant(self.request))
 
 
 class ScheduledReportDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -88,4 +89,4 @@ class ScheduledReportDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = ScheduledReportSerializer
 
     def get_queryset(self):
-        return ScheduledReport.objects.filter(merchant=self.request.user.merchant)
+        return ScheduledReport.objects.filter(merchant=get_merchant(self.request))
