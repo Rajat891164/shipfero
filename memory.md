@@ -46,6 +46,8 @@
 /api/tracking/      tracking        /api/billing/        billing
 /api/ndr/           ndr             /api/notifications/  notifications
 /api/returns/       returns         /api/admin/          admin_panel
+
+/api/merchants/dashboard/  — Module 4, aggregated dashboard (added Phase 1)
 ```
 
 Registered in `backend\config\urls.py`. Har app ka apna `urls.py`.
@@ -72,16 +74,33 @@ Registered in `backend\config\urls.py`. Har app ka apna `urls.py`.
 
 ---
 
-## 🐛 Known issues (jab tak fix na ho)
+## 🐛 Known issues
 
 1. ~~`pricing/models.py` duplicate field~~ ✅ fixed (`4bae33f`).
 2. ~~13 apps ki migrations missing~~ ✅ fixed — sab migrated, 48 tables live in `shipfero_db` (`9415e0b`).
-3. Frontend `api.js` **purane endpoints** (`/accounts/`, `/logistics/`, `/wallet/balance/`) — current backend se mismatch. Rewire needed (Phase 2).
-4. Root `database/ frontend/ ui/ deployment/` — khaali placeholders.
-5. `config/settings_old.py` — legacy, cleanup pending (low priority).
-6. Many views (`couriers`, `integrations`, `reports`, `orders`, `ndr`, `returns`, `billing`) do `self.request.user.merchant` directly — raises unhandled `RelatedObjectDoesNotExist` → 500 if user has no Merchant row (e.g. superuser/staff). Fix per-module in Phase 1 (shared mixin or try/except → 403/404).
+3. ~~`user.merchant` unhandled 500~~ ✅ fixed everywhere via `core/utils.get_merchant()` — swept across all 12 core modules in Phase 1 (commits `9013fc9` through `a6ad408`). New app code should use `get_merchant(request)`, never `request.user.merchant` directly.
+4. Frontend `api.js` **purane endpoints** (`/accounts/`, `/logistics/`, `/wallet/balance/`) — current backend se mismatch. Rewire needed (Phase 2 — not started).
+5. Root `database/ frontend/ ui/ deployment/` — khaali placeholders.
+6. `config/settings_old.py` — legacy, cleanup pending (low priority).
 7. `accounts.User.mobile` — required+unique but not in `REQUIRED_FIELDS`; `createsuperuser` leaves it as `''`. Fine for one superuser, risky for a second.
-8. `django-cors-headers` referenced via `CORS_ALLOW_ALL_ORIGINS` in `development.py` but package not installed/not in `INSTALLED_APPS`/`MIDDLEWARE` — no-op today, will matter once frontend (different origin/port) starts calling the API (Phase 2).
+8. `django-cors-headers` referenced via `CORS_ALLOW_ALL_ORIGINS` in `development.py` but package not installed — no-op today, will matter once frontend (different origin/port) calls the API (Phase 2).
+9. Payment Method Mapping / Status Pushback Config (PRD Module 3 sub-features) — no models built yet. Order processing should eventually block on unmapped payment methods per PRD; deferred.
+10. Reports (Module 13) and courier/channel health monitors (Modules 2/3) are synchronous stubs pending Celery — by design, not bugs (Phase 3 work).
+
+---
+
+## 🔐 Encryption pattern (established, reuse this)
+
+`core/encryption.py` — Fernet/AES symmetric encryption for any sensitive field stored in the DB (API keys, tokens, secrets). Key derives from `SECRET_KEY` unless `FIELD_ENCRYPTION_KEY` env var is set.
+
+```python
+from core.encryption import encrypt_value, decrypt_value, mask_value
+# on write (create/update serializer): validated_data[field] = encrypt_value(raw)
+# on read: add a SerializerMethodField returning mask_value(decrypt_value(obj.field))
+```
+Applied to: `couriers.MerchantCourier` (api_key/api_secret/account_number), `integrations.ChannelIntegration` (api_key/api_secret/access_token), `carriers.Carrier` via `admin_panel.AdminCarrierSerializer` (api_key/api_secret). If a new app stores third-party credentials, use this same pattern — don't store plaintext.
+
+`core/utils.py` — `get_merchant(request)` returns the request user's Merchant or raises a clean DRF 403 (instead of `request.user.merchant` raising an unhandled 500 for staff/superuser accounts). Use this in every new merchant-scoped view.
 
 ---
 
@@ -91,8 +110,10 @@ Registered in `backend\config\urls.py`. Har app ka apna `urls.py`.
 
 | Role | Email | Password | Notes |
 |------|-------|----------|-------|
-| Superuser (Django admin) | `admin@shipfero.dev` | `Admin@12345` | No Merchant row — merchant-scoped endpoints will 500 (see known issue #6) |
-| Test merchant | `testmerchant@shipfero.dev` | `Test@12345` | Has Merchant row, `onboarding_step=3` (email verified, business-profile next) |
+| Superuser (Django admin) | `admin@shipfero.dev` | `Admin@12345` | No Merchant row — merchant-scoped endpoints correctly 403 (get_merchant) |
+| Test merchant | `testmerchant@shipfero.dev` | `Test@12345` | Has Merchant row, KYC VERIFIED, wallet ~₹5840, 1 default pickup location (Mumbai), 3 orders (1 COD booked, 2 prepaid booked+bulk), 1 NDR (RE_ATTEMPTING), 1 return+refund, 1 courier config (Bluedart), 1 Shopify integration, 1 API key, 1 invited staff |
+
+Seeded reference data: Carrier `BLUEDART` (id 1) + `DELHIVERY` (id 2, admin-created), 1 `CarrierRate` (STANDARD, zone A→B, base ₹40 + ₹10/kg, COD ₹20/1.5%).
 
 Dev server: `"venv/Scripts/python.exe" manage.py runserver 127.0.0.1:8000`
 
