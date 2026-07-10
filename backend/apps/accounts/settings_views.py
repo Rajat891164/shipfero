@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from core.utils import get_merchant
 from .models import MerchantAPIKey, StaffMember, AuditLog
 from .settings_serializers import (
     MerchantAPIKeySerializer,
@@ -32,12 +33,12 @@ class APIKeyListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         keys = MerchantAPIKey.objects.filter(merchant=merchant, is_active=True)
         return Response(MerchantAPIKeySerializer(keys, many=True).data)
 
     def post(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         name = request.data.get("name", "Default Key")
         
         # Generate API Key
@@ -72,13 +73,13 @@ class APIKeyRevokeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, pk):
+        merchant = get_merchant(request)
         try:
-            key = MerchantAPIKey.objects.get(pk=pk, merchant=request.user.merchant)
-            key.is_active = false
+            key = MerchantAPIKey.objects.get(pk=pk, merchant=merchant)
             key.delete()
-            
+
             AuditLog.objects.create(
-                merchant=request.user.merchant,
+                merchant=merchant,
                 user=request.user,
                 action_type="API_KEY_REVOKED",
                 details=f"Revoked API key: {key.name}",
@@ -95,7 +96,7 @@ class StaffMemberListView(generics.ListAPIView):
     serializer_class = StaffMemberSerializer
 
     def get_queryset(self):
-        return StaffMember.objects.filter(merchant=self.request.user.merchant).select_related("user")
+        return StaffMember.objects.filter(merchant=get_merchant(self.request)).select_related("user")
 
 
 class InviteStaffView(APIView):
@@ -110,26 +111,28 @@ class InviteStaffView(APIView):
         if User.objects.filter(email=data["email"]).exists():
             return Response({"detail": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create user
+        # Create user with a random password — invited staff must reset it
+        # via the emailed reset link (make_random_password() was removed in
+        # Django 5.1, so generate one directly).
         user = User.objects.create_user(
             email=data["email"],
             first_name=data["first_name"],
             last_name=data["last_name"],
             mobile=data["mobile"],
             is_verified=True,
-            password=User.objects.make_random_password()
+            password=secrets.token_urlsafe(24),
         )
 
         # Create staff profile
         staff = StaffMember.objects.create(
             user=user,
-            merchant=request.user.merchant,
+            merchant=get_merchant(request),
             role=data["role"],
             permissions=data.get("permissions", {})
         )
 
         AuditLog.objects.create(
-            merchant=request.user.merchant,
+            merchant=get_merchant(request),
             user=request.user,
             action_type="STAFF_INVITED",
             details=f"Invited staff: {data['email']} with role {data['role']}",
@@ -147,7 +150,7 @@ class StaffMemberDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = StaffMemberSerializer
 
     def get_queryset(self):
-        return StaffMember.objects.filter(merchant=self.request.user.merchant)
+        return StaffMember.objects.filter(merchant=get_merchant(self.request))
 
 
 class AuditLogListView(generics.ListAPIView):
@@ -156,4 +159,4 @@ class AuditLogListView(generics.ListAPIView):
     serializer_class = AuditLogSerializer
 
     def get_queryset(self):
-        return AuditLog.objects.filter(merchant=self.request.user.merchant)
+        return AuditLog.objects.filter(merchant=get_merchant(self.request))
