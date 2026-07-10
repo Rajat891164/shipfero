@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from core.utils import get_merchant
 from .models import Order, OrderCustomer, OrderItem, OrderStatusHistory
 
 
@@ -139,7 +140,7 @@ class CreateOrderSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
-        merchant = self.context["request"].user.merchant
+        merchant = get_merchant(self.context["request"])
         order = Order.objects.create(merchant=merchant, **validated_data)
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)

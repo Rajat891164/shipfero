@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
+from core.utils import get_merchant
 from .models import Shipment, ShipmentStatusEvent
 from .serializers import (
     ShipmentListSerializer,
@@ -25,7 +26,7 @@ class ShipmentListCreateView(generics.ListCreateAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        qs = self.request.user.merchant.shipments.select_related("carrier", "pickup_location")
+        qs = get_merchant(self.request).shipments.select_related("carrier", "pickup_location")
         # Filter by status
         status_filter = self.request.query_params.get("status")
         if status_filter:
@@ -65,7 +66,7 @@ class ShipmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     http_method_names = ["get", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        return self.request.user.merchant.shipments.select_related(
+        return get_merchant(self.request).shipments.select_related(
             "carrier", "pickup_location"
         ).prefetch_related("status_events", "label")
 
@@ -105,7 +106,7 @@ class BookShipmentView(APIView):
 
     def post(self, request, pk):
         try:
-            shipment = request.user.merchant.shipments.get(pk=pk)
+            shipment = get_merchant(request).shipments.get(pk=pk)
         except Shipment.DoesNotExist:
             return Response({"detail": "Shipment not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -170,7 +171,7 @@ class ShipmentStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         shipments = merchant.shipments
 
         stats = {

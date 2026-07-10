@@ -1,14 +1,19 @@
-import uuid
+from decimal import Decimal
+
+from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework import generics, status, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.carriers.models import Carrier
+from apps.carriers.models import Carrier, CarrierRate
+from apps.merchants.models import Merchant, PickupLocation
 from apps.shipments.models import Shipment, ShipmentStatusEvent
 from apps.billing.models import Wallet, WalletTransaction
 from apps.notifications.models import create_notification
+from core.utils import get_merchant
 
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
@@ -19,6 +24,8 @@ from .serializers import (
     BookAWBSerializer,
     BulkProcessSerializer,
 )
+
+DEFAULT_WEIGHT_KG = Decimal("0.5")
 
 
 class OrderListCreateView(generics.ListCreateAPIView):
@@ -33,12 +40,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        merchant = self.request.user.merchant
+        merchant = get_merchant(self.request)
         qs = merchant.orders.select_related(
             "assigned_carrier", "shipment", "pickup_location"
         ).prefetch_related("items")
 
-        # Filters
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter.upper())
@@ -94,7 +100,7 @@ class OrderDetailView(generics.RetrieveUpdateAPIView):
     http_method_names = ["get", "patch", "head", "options"]
 
     def get_queryset(self):
-        return self.request.user.merchant.orders.select_related(
+        return get_merchant(self.request).orders.select_related(
             "assigned_carrier", "shipment", "pickup_location"
         ).prefetch_related("items", "status_history", "customer_detail")
 
@@ -116,8 +122,9 @@ class ProcessOrderView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
+        merchant = get_merchant(request)
         try:
-            order = request.user.merchant.orders.get(pk=pk)
+            order = merchant.orders.get(pk=pk)
         except Order.DoesNotExist:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -146,17 +153,14 @@ class ProcessOrderView(APIView):
 
         if data.get("assigned_carrier_id"):
             try:
-                carrier = Carrier.objects.get(pk=data["assigned_carrier_id"])
-                order.assigned_carrier = carrier
+                order.assigned_carrier = Carrier.objects.get(pk=data["assigned_carrier_id"])
             except Carrier.DoesNotExist:
                 pass
 
         if data.get("pickup_location_id"):
-            from apps.merchants.models import PickupLocation
             try:
-                pl = request.user.merchant.pickup_locations.get(pk=data["pickup_location_id"])
-                order.pickup_location = pl
-            except Exception:
+                order.pickup_location = merchant.pickup_locations.get(pk=data["pickup_location_id"])
+            except PickupLocation.DoesNotExist:
                 pass
 
         order.save()
@@ -172,94 +176,43 @@ class ProcessOrderView(APIView):
         return Response(OrderDetailSerializer(order).data)
 
 
-class BookAWBView(APIView):
+def _book_awb_for_order(merchant, order, carrier, service_type, pickup_location, user):
     """
-    POST /api/orders/<id>/book-awb/
-    Book AWB for a PROCESSING order:
-    1. Check wallet balance
-    2. Create Shipment + AWB
-    3. Deduct wallet
-    4. Move order to BOOKED
+    Shared booking logic used by both single (BookAWBView) and bulk
+    (BulkProcessOrdersView) AWB booking. Returns (shipment, error_dict) —
+    error_dict is None on success.
     """
-    permission_classes = [IsAuthenticated]
+    if not pickup_location:
+        pickup_location = merchant.pickup_locations.filter(is_default=True, is_active=True).first()
+    if not pickup_location:
+        return None, {"detail": "No pickup location found. Please set a default."}
 
-    def post(self, request, pk):
-        merchant = request.user.merchant
-        try:
-            order = merchant.orders.get(pk=pk)
-        except Order.DoesNotExist:
-            return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+    weight = order.total_weight or DEFAULT_WEIGHT_KG
+    rate = CarrierRate.objects.filter(
+        carrier=carrier,
+        service_type=service_type,
+        is_active=True,
+        min_weight_kg__lte=weight,
+        max_weight_kg__gte=weight,
+    ).first()
 
-        if order.status != Order.OrderStatus.PROCESSING:
-            return Response(
-                {"detail": "Only PROCESSING orders can have AWB booked."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    shipping_charge = Decimal("0")
+    cod_charge = Decimal("0")
+    if rate:
+        shipping_charge = rate.base_rate + rate.rate_per_kg * weight
+        if order.payment_type == Order.PaymentType.COD:
+            cod_charge = max(rate.cod_charge, rate.cod_percentage * order.cod_amount / 100)
+    total_charge = shipping_charge + cod_charge
 
-        # Check KYC verified
-        if merchant.kyc_status != "VERIFIED":
-            return Response(
-                {"detail": "AWB booking blocked. KYC not verified yet."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    wallet, _ = Wallet.objects.get_or_create(merchant=merchant)
+    if wallet.balance < total_charge:
+        return None, {
+            "detail": "Insufficient wallet balance.",
+            "required": str(total_charge),
+            "available": str(wallet.balance),
+        }
 
-        serializer = BookAWBSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
-        try:
-            carrier = Carrier.objects.get(pk=data["carrier_id"], status=Carrier.Status.ACTIVE)
-        except Carrier.DoesNotExist:
-            return Response({"detail": "Carrier not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Determine pickup location
-        pickup_location = order.pickup_location
-        if data.get("pickup_location_id"):
-            from apps.merchants.models import PickupLocation
-            try:
-                pickup_location = merchant.pickup_locations.get(pk=data["pickup_location_id"])
-            except PickupLocation.DoesNotExist:
-                pass
-        if not pickup_location:
-            pickup_location = merchant.pickup_locations.filter(is_default=True, is_active=True).first()
-        if not pickup_location:
-            return Response(
-                {"detail": "No pickup location found. Please set a default."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Estimate shipping charge (simplified — in real: call carrier rate API)
-        from apps.carriers.models import CarrierRate
-        weight = order.total_weight or 0.5
-        rate = CarrierRate.objects.filter(
-            carrier=carrier,
-            service_type=data["service_type"],
-            is_active=True,
-            min_weight_kg__lte=weight,
-            max_weight_kg__gte=weight,
-        ).first()
-        shipping_charge = 0
-        cod_charge = 0
-        if rate:
-            shipping_charge = float(rate.base_rate) + float(rate.rate_per_kg) * float(weight)
-            if order.payment_type == Order.PaymentType.COD:
-                cod_charge = max(float(rate.cod_charge), float(rate.cod_percentage) * float(order.cod_amount) / 100)
-
-        total_charge = shipping_charge + cod_charge
-
-        # Wallet balance check
-        wallet, _ = Wallet.objects.get_or_create(merchant=merchant)
-        if float(wallet.balance) < total_charge:
-            return Response(
-                {
-                    "detail": "Insufficient wallet balance.",
-                    "required": total_charge,
-                    "available": float(wallet.balance),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Create Shipment
+    with transaction.atomic():
         shipment = Shipment.objects.create(
             merchant=merchant,
             carrier=carrier,
@@ -285,16 +238,14 @@ class BookAWBView(APIView):
                 if order.payment_type == Order.PaymentType.COD
                 else Shipment.PaymentMode.PREPAID
             ),
-            service_type=data["service_type"],
+            service_type=service_type,
             shipping_charge=shipping_charge,
             cod_charge=cod_charge,
             total_charge=total_charge,
             status=Shipment.Status.BOOKED,
             booked_at=timezone.now(),
             product_name=order.items.first().product_name if order.items.exists() else "",
-            product_quantity=order.items.aggregate(
-                total=models.Sum("quantity")
-            )["total"] or 1,
+            product_quantity=order.items.aggregate(total=Sum("quantity"))["total"] or 1,
         )
 
         ShipmentStatusEvent.objects.create(
@@ -305,15 +256,17 @@ class BookAWBView(APIView):
             source="merchant",
         )
 
-        # Deduct wallet
-        wallet.debit(
-            amount=total_charge,
-            description=f"Shipping charge for {order.order_number}",
-            reference=shipment.tracking_id,
-            txn_type=WalletTransaction.TransactionType.DEDUCTION,
-        )
+        try:
+            wallet.debit(
+                amount=total_charge,
+                description=f"Shipping charge for {order.order_number}",
+                reference=shipment.tracking_id,
+                txn_type=WalletTransaction.TransactionType.DEDUCTION,
+            )
+        except ValueError as exc:
+            transaction.set_rollback(True)
+            return None, {"detail": str(exc)}
 
-        # Link shipment to order
         old_status = order.status
         order.shipment = shipment
         order.assigned_carrier = carrier
@@ -324,39 +277,89 @@ class BookAWBView(APIView):
             order=order,
             from_status=old_status,
             to_status=order.status,
-            changed_by=request.user,
+            changed_by=user,
             note=f"AWB: {shipment.tracking_id}",
             source="merchant",
         )
 
-        create_notification(
-            user=request.user,
-            title="AWB Booked",
-            message=f"Order {order.order_number} booked via {carrier.name}. Tracking: {shipment.tracking_id}",
-            notification_type="SHIPMENT",
-            entity_type="order",
-            entity_id=order.id,
+    create_notification(
+        user=user,
+        title="AWB Booked",
+        message=f"Order {order.order_number} booked via {carrier.name}. Tracking: {shipment.tracking_id}",
+        notification_type="SHIPMENT",
+        entity_type="order",
+        entity_id=order.id,
+    )
+
+    return shipment, None
+
+
+class BookAWBView(APIView):
+    """
+    POST /api/orders/<id>/book-awb/
+    Book AWB for a PROCESSING order:
+    1. Check KYC + wallet balance
+    2. Create Shipment + AWB
+    3. Deduct wallet
+    4. Move order to BOOKED
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        merchant = get_merchant(request)
+        try:
+            order = merchant.orders.get(pk=pk)
+        except Order.DoesNotExist:
+            return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.status != Order.OrderStatus.PROCESSING:
+            return Response(
+                {"detail": "Only PROCESSING orders can have AWB booked."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if merchant.kyc_status != Merchant.KYCStatus.VERIFIED:
+            return Response(
+                {"detail": "AWB booking blocked. KYC not verified yet."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = BookAWBSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            carrier = Carrier.objects.get(pk=data["carrier_id"], status=Carrier.Status.ACTIVE)
+        except Carrier.DoesNotExist:
+            return Response({"detail": "Carrier not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
+
+        pickup_location = order.pickup_location
+        if data.get("pickup_location_id"):
+            try:
+                pickup_location = merchant.pickup_locations.get(pk=data["pickup_location_id"])
+            except PickupLocation.DoesNotExist:
+                pass
+
+        shipment, error = _book_awb_for_order(
+            merchant, order, carrier, data["service_type"], pickup_location, request.user
         )
+        if error:
+            return Response(error, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             "order": OrderDetailSerializer(order).data,
             "tracking_id": shipment.tracking_id,
             "awb_number": shipment.awb_number,
-            "shipping_charge": shipping_charge,
-            "cod_charge": cod_charge,
-            "total_charge": total_charge,
+            "shipping_charge": str(shipment.shipping_charge),
+            "cod_charge": str(shipment.cod_charge),
+            "total_charge": str(shipment.total_charge),
         })
-
-
-# Import needed for BookAWBView
-from django.db import models as django_models
-import django.db.models as models
 
 
 class BulkProcessOrdersView(APIView):
     """
     POST /api/orders/bulk-process/
-    Book AWBs for up to 500 orders in one call.
+    Book AWBs for up to 500 PROCESSING orders in one call.
     """
     permission_classes = [IsAuthenticated]
 
@@ -365,34 +368,36 @@ class BulkProcessOrdersView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         order_ids = data["order_ids"]
         carrier_id = data["carrier_id"]
+        service_type = data["service_type"]
 
-        # Validate orders belong to merchant and are PROCESSING
-        orders = merchant.orders.filter(
-            pk__in=order_ids, status=Order.OrderStatus.PROCESSING
-        )
-        found_ids = list(orders.values_list("id", flat=True))
-        not_found = [oid for oid in order_ids if oid not in found_ids]
-
-        results = {
-            "success": [],
-            "failed": [],
-            "not_found": not_found,
-        }
+        if merchant.kyc_status != Merchant.KYCStatus.VERIFIED:
+            return Response(
+                {"detail": "AWB booking blocked. KYC not verified yet."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
             carrier = Carrier.objects.get(pk=carrier_id, status=Carrier.Status.ACTIVE)
         except Carrier.DoesNotExist:
-            return Response({"detail": "Carrier not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Carrier not found or inactive."}, status=status.HTTP_404_NOT_FOUND)
+
+        orders = merchant.orders.filter(pk__in=order_ids, status=Order.OrderStatus.PROCESSING)
+        found_ids = list(orders.values_list("id", flat=True))
+        not_found = [oid for oid in order_ids if oid not in found_ids]
+
+        results = {"success": [], "failed": [], "not_found": not_found}
 
         for order in orders:
-            try:
-                # Simplified booking (delegates to same logic as BookAWBView)
-                results["success"].append(order.id)
-            except Exception as e:
-                results["failed"].append({"order_id": order.id, "error": str(e)})
+            shipment, error = _book_awb_for_order(
+                merchant, order, carrier, service_type, order.pickup_location, request.user
+            )
+            if error:
+                results["failed"].append({"order_id": order.id, "error": error.get("detail", "Booking failed.")})
+            else:
+                results["success"].append({"order_id": order.id, "tracking_id": shipment.tracking_id})
 
         return Response({
             "total_requested": len(order_ids),
@@ -409,7 +414,7 @@ class CancelOrderView(APIView):
 
     def post(self, request, pk):
         try:
-            order = request.user.merchant.orders.get(pk=pk)
+            order = get_merchant(request).orders.get(pk=pk)
         except Order.DoesNotExist:
             return Response({"detail": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -444,10 +449,7 @@ class OrderStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
-        orders = merchant.orders
-
-        from django.db.models import Sum, Count
+        orders = get_merchant(request).orders
         today = timezone.now().date()
 
         stats = {
@@ -460,10 +462,8 @@ class OrderStatsView(APIView):
             "cancelled": orders.filter(status=Order.OrderStatus.CANCELLED).count(),
             "flagged": orders.filter(is_flagged=True).count(),
             "today_orders": orders.filter(created_at__date=today).count(),
-            "today_revenue": float(
-                orders.filter(created_at__date=today).aggregate(
-                    total=Sum("order_amount")
-                )["total"] or 0
+            "today_revenue": str(
+                orders.filter(created_at__date=today).aggregate(total=Sum("order_amount"))["total"] or Decimal("0")
             ),
         }
         return Response(stats)
