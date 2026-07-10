@@ -24,6 +24,8 @@
 ## ⚙️ Stack (fixed decisions)
 
 - **Backend:** Django 5.1.11, DRF 3.17, SimpleJWT 5.5, psycopg2-binary. Python via `backend\venv`.
+- ⚠️ **ALWAYS use `backend\venv\Scripts\python.exe`** for manage.py commands, never bare `python` — global Python (3.13) has a *different* Django (4.2.30) installed and produces subtly different migration files. Bash: `"venv/Scripts/python.exe" manage.py ...`.
+- If venv pip packages look stale/missing (e.g. `rest_framework_simplejwt` ImportError), run `venv/Scripts/pip.exe install -r requirements.txt`.
 - **DB:** PostgreSQL — name `shipfero_db`, user `postgres`, host `localhost:5432`, **schema `shipfero`** (set via `search_path` in settings). `db.sqlite3` = ignore (khaali).
 - **Settings module:** `DJANGO_SETTINGS_MODULE=config.settings` (package `__init__.py` chooses env).
 - **User model:** `accounts.User` — email-based, custom manager, no username.
@@ -72,11 +74,27 @@ Registered in `backend\config\urls.py`. Har app ka apna `urls.py`.
 
 ## 🐛 Known issues (jab tak fix na ho)
 
-1. `pricing/models.py` — `RateCard.rto_charge` **duplicate field** → `manage.py check` fails.
-2. 13 apps ki **migrations missing** (only accounts+merchants migrated).
-3. Frontend `api.js` **purane endpoints** (`/accounts/`, `/logistics/`, `/wallet/balance/`) — current backend se mismatch. Rewire needed.
+1. ~~`pricing/models.py` duplicate field~~ ✅ fixed (`4bae33f`).
+2. ~~13 apps ki migrations missing~~ ✅ fixed — sab migrated, 48 tables live in `shipfero_db` (`9415e0b`).
+3. Frontend `api.js` **purane endpoints** (`/accounts/`, `/logistics/`, `/wallet/balance/`) — current backend se mismatch. Rewire needed (Phase 2).
 4. Root `database/ frontend/ ui/ deployment/` — khaali placeholders.
-5. `config/settings_old.py` — legacy, cleanup pending.
+5. `config/settings_old.py` — legacy, cleanup pending (low priority).
+6. Many views (`couriers`, `integrations`, `reports`, `orders`, `ndr`, `returns`, `billing`) do `self.request.user.merchant` directly — raises unhandled `RelatedObjectDoesNotExist` → 500 if user has no Merchant row (e.g. superuser/staff). Fix per-module in Phase 1 (shared mixin or try/except → 403/404).
+7. `accounts.User.mobile` — required+unique but not in `REQUIRED_FIELDS`; `createsuperuser` leaves it as `''`. Fine for one superuser, risky for a second.
+8. `django-cors-headers` referenced via `CORS_ALLOW_ALL_ORIGINS` in `development.py` but package not installed/not in `INSTALLED_APPS`/`MIDDLEWARE` — no-op today, will matter once frontend (different origin/port) starts calling the API (Phase 2).
+
+---
+
+## 🔑 Local dev test accounts
+
+(Local Postgres only, not real credentials — recreate if DB reset)
+
+| Role | Email | Password | Notes |
+|------|-------|----------|-------|
+| Superuser (Django admin) | `admin@shipfero.dev` | `Admin@12345` | No Merchant row — merchant-scoped endpoints will 500 (see known issue #6) |
+| Test merchant | `testmerchant@shipfero.dev` | `Test@12345` | Has Merchant row, `onboarding_step=3` (email verified, business-profile next) |
+
+Dev server: `"venv/Scripts/python.exe" manage.py runserver 127.0.0.1:8000`
 
 ---
 
