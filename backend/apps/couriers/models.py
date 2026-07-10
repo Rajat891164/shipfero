@@ -12,24 +12,41 @@ class MerchantCourier(TimeStampedModel):
         INACTIVE = "INACTIVE", "Inactive"
         CREDENTIALS_INVALID = "CREDENTIALS_INVALID", "Credentials Invalid"
 
+    class LabelType(models.TextChoices):
+        A4 = "A4", "A4"
+        A6 = "A6", "A6"
+        THERMAL = "THERMAL", "Thermal"
+
+    class ShippingMode(models.TextChoices):
+        SURFACE = "SURFACE", "Surface"
+        AIR = "AIR", "Air"
+        EXPRESS = "EXPRESS", "Express"
+
     merchant = models.ForeignKey(
         Merchant, on_delete=models.CASCADE, related_name="configured_couriers"
     )
     carrier = models.ForeignKey(
         Carrier, on_delete=models.CASCADE, related_name="merchant_configurations"
     )
-    
-    # Credentials (in a real app, these must be encrypted)
-    api_key = models.CharField(max_length=255, null=True, blank=True)
-    api_secret = models.CharField(max_length=255, null=True, blank=True)
-    account_number = models.CharField(max_length=100, null=True, blank=True)
-    
+
+    # Credentials — stored AES-encrypted (see core.encryption); never returned in plaintext by the API
+    api_key = models.CharField(max_length=500, null=True, blank=True)
+    api_secret = models.CharField(max_length=500, null=True, blank=True)
+    account_number = models.CharField(max_length=500, null=True, blank=True)
+
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.ACTIVE)
-    
+
     # Preferences
     is_default = models.BooleanField(default=False)
     allow_cod = models.BooleanField(default=True)
-    
+
+    # Wizard Step 4 — Configure Settings
+    label_type = models.CharField(max_length=10, choices=LabelType.choices, default=LabelType.A4)
+    otp_delivery = models.BooleanField(default=False)
+    forward_active = models.BooleanField(default=True)
+    reverse_active = models.BooleanField(default=True)
+    shipping_mode = models.CharField(max_length=10, choices=ShippingMode.choices, default=ShippingMode.SURFACE)
+
     last_tested_at = models.DateTimeField(null=True, blank=True)
     last_test_status = models.CharField(max_length=255, null=True, blank=True)
 
