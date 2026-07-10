@@ -1,8 +1,15 @@
+from decimal import Decimal
+
+from django.db.models import Sum, Count
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from core.utils import get_merchant
+from apps.orders.models import Order
+from apps.ndr.models import NDR
 from .models import Merchant, MerchantBankDetails, PickupLocation
 from .serializers import (
     OnboardingStatusSerializer,
@@ -14,6 +21,9 @@ from .serializers import (
     MerchantPlanSerializer,
 )
 
+LOW_WALLET_BALANCE_THRESHOLD = Decimal("500.00")
+NDR_STALE_HOURS = 48
+
 
 # ─── Onboarding Status ────────────────────────────────────────────────────────
 
@@ -22,7 +32,7 @@ class OnboardingStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         serializer = OnboardingStatusSerializer.from_merchant(merchant)
         return Response(serializer.data)
 
@@ -34,12 +44,12 @@ class MerchantProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         serializer = MerchantBasicSerializer(merchant)
         return Response(serializer.data)
 
     def patch(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         serializer = MerchantBasicSerializer(
             merchant, data=request.data, partial=True
         )
@@ -55,7 +65,7 @@ class BusinessProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         if not hasattr(merchant, "profile"):
             return Response(
                 {"detail": "Business profile not set up yet."},
@@ -65,7 +75,7 @@ class BusinessProfileView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         if hasattr(merchant, "profile"):
             return Response(
                 {"detail": "Business profile already exists. Use PATCH to update."},
@@ -79,7 +89,7 @@ class BusinessProfileView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def patch(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         if not hasattr(merchant, "profile"):
             return Response(
                 {"detail": "Business profile not found. Use POST to create."},
@@ -102,7 +112,7 @@ class MerchantKYCListCreateView(generics.ListCreateAPIView):
     serializer_class = MerchantKYCSerializer
 
     def get_queryset(self):
-        return self.request.user.merchant.kyc_documents.all().order_by("-created_at")
+        return get_merchant(self.request).kyc_documents.all().order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save()
@@ -114,7 +124,7 @@ class MerchantKYCDetailView(generics.RetrieveDestroyAPIView):
     serializer_class = MerchantKYCSerializer
 
     def get_queryset(self):
-        return self.request.user.merchant.kyc_documents.all()
+        return get_merchant(self.request).kyc_documents.all()
 
 
 # ─── Bank Details (Onboarding Step 5) ─────────────────────────────────────────
@@ -125,7 +135,7 @@ class BankDetailsListCreateView(generics.ListCreateAPIView):
     serializer_class = BankDetailsSerializer
 
     def get_queryset(self):
-        return self.request.user.merchant.bank_accounts.filter(
+        return get_merchant(self.request).bank_accounts.filter(
             is_active=True
         ).order_by("-created_at")
 
@@ -140,7 +150,7 @@ class BankDetailsDetailView(generics.RetrieveUpdateDestroyAPIView):
     http_method_names = ["get", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        return self.request.user.merchant.bank_accounts.all()
+        return get_merchant(self.request).bank_accounts.all()
 
     def perform_destroy(self, instance):
         # Soft delete
@@ -156,7 +166,7 @@ class PickupLocationListCreateView(generics.ListCreateAPIView):
     serializer_class = PickupLocationSerializer
 
     def get_queryset(self):
-        return self.request.user.merchant.pickup_locations.filter(
+        return get_merchant(self.request).pickup_locations.filter(
             is_active=True
         ).order_by("-is_default", "-created_at")
 
@@ -171,7 +181,7 @@ class PickupLocationDetailView(generics.RetrieveUpdateDestroyAPIView):
     http_method_names = ["get", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        return self.request.user.merchant.pickup_locations.all()
+        return get_merchant(self.request).pickup_locations.all()
 
     def perform_destroy(self, instance):
         instance.is_active = False
@@ -183,7 +193,7 @@ class SetDefaultPickupLocationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         try:
             location = merchant.pickup_locations.get(pk=pk, is_active=True)
         except PickupLocation.DoesNotExist:
@@ -204,7 +214,7 @@ class CompleteOnboardingView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
 
         errors = []
         if not merchant.email_verified:
@@ -239,8 +249,87 @@ class MerchantPlanView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        plan = request.user.merchant.plans.filter(is_current=True).first()
+        merchant = get_merchant(request)
+        plan = merchant.plans.filter(is_current=True).first()
         if not plan:
             return Response({"detail": "No active plan."}, status=status.HTTP_404_NOT_FOUND)
         serializer = MerchantPlanSerializer(plan)
         return Response(serializer.data)
+
+
+# ─── Dashboard (Module 4) ──────────────────────────────────────────────────────
+
+class DashboardView(APIView):
+    """
+    GET /api/merchants/dashboard/ — aggregated merchant dashboard.
+
+    Combines Orders, Wallet, NDR and Merchant/KYC state into a single call,
+    matching PRD Module 4 (Overview Cards, Shipment Status Breakdown,
+    Pending Actions Widget). Business Summary Charts / Top-10 views are not
+    included yet (deferred — need historical trend aggregation).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        merchant = get_merchant(request)
+        today = timezone.now().date()
+        orders = Order.objects.filter(merchant=merchant)
+        orders_today = orders.filter(created_at__date=today)
+
+        wallet_balance = merchant.wallet.balance if hasattr(merchant, "wallet") else Decimal("0.00")
+
+        status_breakdown = dict(
+            orders.values_list("status").annotate(count=Count("id")).order_by()
+        )
+
+        ndr_pending_qs = NDR.objects.filter(
+            shipment__merchant=merchant, ndr_status=NDR.NDRStatus.PENDING
+        )
+        ndr_stale_cutoff = timezone.now() - timezone.timedelta(hours=NDR_STALE_HOURS)
+
+        pending_actions = []
+        if wallet_balance < LOW_WALLET_BALANCE_THRESHOLD:
+            pending_actions.append({
+                "type": "LOW_WALLET_BALANCE",
+                "severity": "high",
+                "message": f"Wallet balance is below ₹{LOW_WALLET_BALANCE_THRESHOLD}.",
+            })
+        new_orders_count = orders.filter(status=Order.OrderStatus.NEW).count()
+        if new_orders_count:
+            pending_actions.append({
+                "type": "NEW_UNPROCESSED_ORDERS",
+                "severity": "medium",
+                "message": f"{new_orders_count} new order(s) awaiting processing.",
+                "count": new_orders_count,
+            })
+        ndr_stale_count = ndr_pending_qs.filter(ndr_date__lte=ndr_stale_cutoff).count()
+        if ndr_stale_count:
+            pending_actions.append({
+                "type": "NDR_ACTION_PENDING",
+                "severity": "medium",
+                "message": f"{ndr_stale_count} NDR(s) pending action for over {NDR_STALE_HOURS}h.",
+                "count": ndr_stale_count,
+            })
+        if merchant.kyc_status != Merchant.KYCStatus.VERIFIED:
+            pending_actions.append({
+                "type": "KYC_INCOMPLETE",
+                "severity": "high",
+                "message": "KYC verification is incomplete.",
+            })
+
+        return Response({
+            "overview": {
+                "total_orders_today": orders_today.count(),
+                "total_revenue_today": orders_today.aggregate(total=Sum("order_amount"))["total"] or Decimal("0.00"),
+                "total_shipments_booked_today": orders_today.filter(
+                    status__in=[
+                        Order.OrderStatus.BOOKED, Order.OrderStatus.IN_TRANSIT,
+                        Order.OrderStatus.OUT_FOR_DELIVERY, Order.OrderStatus.DELIVERED,
+                    ]
+                ).count(),
+                "wallet_balance": wallet_balance,
+            },
+            "shipment_status_breakdown": status_breakdown,
+            "pending_actions": pending_actions,
+            "ndr_pending_count": ndr_pending_qs.count(),
+        })

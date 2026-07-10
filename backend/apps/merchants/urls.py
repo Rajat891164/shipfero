@@ -12,11 +12,13 @@ from .views import (
     SetDefaultPickupLocationView,
     CompleteOnboardingView,
     MerchantPlanView,
+    DashboardView,
 )
 
 urlpatterns = [
     # Merchant profile (basic info)
     path("me/", MerchantProfileView.as_view(), name="merchant-me"),
+    path("dashboard/", DashboardView.as_view(), name="merchant-dashboard"),
 
     # Onboarding
     path("onboarding/status/", OnboardingStatusView.as_view(), name="onboarding-status"),
