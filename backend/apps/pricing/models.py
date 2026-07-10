@@ -37,7 +37,7 @@ class RateCard(TimeStampedModel):
     
     # Rates
     forward_charge = models.DecimalField(max_digits=10, decimal_places=2)
-    rto_charge = reverse_charge = models.DecimalField(max_digits=10, decimal_places=2)
+    rto_charge = models.DecimalField(max_digits=10, decimal_places=2)
     
     # COD
     cod_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
