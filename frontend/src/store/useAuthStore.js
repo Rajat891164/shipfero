@@ -1,46 +1,42 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { tokenStore } from '../services/api';
 
 /**
  * GLOBAL AUTHENTICATION STORE (Zustand)
- * Manages user session, JWT tokens, and merchant profile data.
+ * Manages user session and JWT tokens. Tokens are also mirrored into
+ * localStorage via tokenStore so the axios interceptors can read them
+ * outside of React.
  */
 const useAuthStore = create(
   persist(
     (set) => ({
       user: null,
-      token: null,
       isAuthenticated: false,
-      
-      // Login Action
-      login: (userData, authToken) => {
-        set({ 
-          user: userData, 
-          token: authToken, 
-          isAuthenticated: true 
-        });
-        localStorage.setItem('auth_token', authToken);
+
+      // Persist JWT pair + mark authenticated.
+      setSession: ({ access, refresh, user }) => {
+        tokenStore.set(access, refresh);
+        set({ user: user ?? null, isAuthenticated: true });
       },
 
-      // Logout Action
+      setUser: (user) => set({ user }),
+
       logout: () => {
-        set({ 
-          user: null, 
-          token: null, 
-          isAuthenticated: false 
-        });
-        localStorage.clear();
+        tokenStore.clear();
+        set({ user: null, isAuthenticated: false });
       },
 
-      // Update Merchant Profile
-      updateProfile: (updatedData) => {
-        set((state) => ({ 
-          user: { ...state.user, ...updatedData } 
-        }));
-      }
+      updateProfile: (updatedData) =>
+        set((state) => ({ user: { ...state.user, ...updatedData } })),
     }),
     {
-      name: 'auth-storage', // persists in localStorage
+      name: 'auth-storage',
+      // Only persist non-sensitive session flags; tokens live in tokenStore.
+      partialize: (state) => ({
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
     }
   )
 );

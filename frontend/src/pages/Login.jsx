@@ -17,6 +17,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import useAuthStore from '../store/useAuthStore';
+import { AuthService, MerchantService } from '../services/api';
 
 const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -31,7 +32,7 @@ const features = [
 
 const Login = () => {
   const navigate = useNavigate();
-  const login = useAuthStore((state) => state.login);
+  const setSession = useAuthStore((state) => state.setSession);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -43,11 +44,27 @@ const Login = () => {
   const onSubmit = async (data) => {
     setIsLoading(true);
     setError('');
-    setTimeout(() => {
-      setIsLoading(false);
-      login({ name: 'Akshay Tomar', email: data.email }, 'mock-jwt-token');
+    try {
+      const { data: tokens } = await AuthService.login(data.email, data.password);
+      setSession({ access: tokens.access, refresh: tokens.refresh });
+
+      // Pull the merchant profile so the app has the user's name/company.
+      try {
+        const { data: merchant } = await MerchantService.me();
+        setSession({ access: tokens.access, refresh: tokens.refresh, user: merchant });
+      } catch {
+        // Non-fatal: staff/superuser accounts have no merchant profile.
+      }
+
       navigate('/dashboard');
-    }, 1500);
+    } catch (err) {
+      const detail =
+        err.response?.data?.detail ||
+        'Invalid email or password. Please try again.';
+      setError(detail);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
