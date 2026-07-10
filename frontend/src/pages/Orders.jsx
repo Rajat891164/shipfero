@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Search, 
-  Filter, 
-  Download, 
+import {
+  Search,
+  Filter,
+  Download,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -14,38 +14,45 @@ import {
   Package,
   RefreshCw
 } from 'lucide-react';
+import { OrderService, unwrap } from '../services/api';
 
-const ordersData = [
-  { id: 'ORD-7721', date: '21 Apr 2026', customer: 'Rahul Sharma',   amount: '₹1,250', status: 'Booked',     courier: 'Delhivery',     awb: '1442155261' },
-  { id: 'ORD-7720', date: '21 Apr 2026', customer: 'Priya Verma',    amount: '₹890',   status: 'In Transit', courier: 'BlueDart',       awb: 'BD882199' },
-  { id: 'ORD-7719', date: '20 Apr 2026', customer: 'Amit Patel',     amount: '₹2,100', status: 'Delivered',  courier: 'XpressBees',    awb: 'XP112233' },
-  { id: 'ORD-7718', date: '20 Apr 2026', customer: 'Sneider John',   amount: '₹450',   status: 'RTO',        courier: 'Ecom Express',  awb: 'EE556677' },
-  { id: 'ORD-7717', date: '19 Apr 2026', customer: 'Megha Singh',    amount: '₹1,560', status: 'Cancelled',  courier: '-',             awb: '-' },
-  { id: 'ORD-7716', date: '19 Apr 2026', customer: 'Vikram AD',      amount: '₹999',   status: 'In Transit', courier: 'Delhivery',     awb: '1442155262' },
-  { id: 'ORD-7715', date: '18 Apr 2026', customer: 'Suresh Raina',   amount: '₹3,400', status: 'Delivered',  courier: 'BlueDart',      awb: 'BD882190' },
-  { id: 'ORD-7714', date: '18 Apr 2026', customer: 'Kajal Dawas',    amount: '₹750',   status: 'On Hold',    courier: '-',             awb: '-' },
-];
-
+// Backend Order.status (UPPERCASE) → display label + badge styling.
 const statusConfig = {
-  'Booked':     { cls: 'bg-primary/10 text-primary border-primary/10',       dot: 'bg-primary' },
-  'In Transit': { cls: 'bg-secondary/10 text-secondary border-secondary/10', dot: 'bg-secondary' },
-  'Delivered':  { cls: 'bg-success/10 text-success border-success/10',       dot: 'bg-success' },
-  'RTO':        { cls: 'bg-error/10 text-error border-error/10',             dot: 'bg-error animate-pulse' },
-  'Cancelled':  { cls: 'bg-muted/10 text-muted border-muted/10',             dot: 'bg-muted' },
-  'On Hold':    { cls: 'bg-warning/10 text-warning border-warning/10',       dot: 'bg-warning' },
+  NEW:              { label: 'New',          cls: 'bg-primary/10 text-primary border-primary/10',       dot: 'bg-primary' },
+  PROCESSING:       { label: 'Processing',   cls: 'bg-warning/10 text-warning border-warning/10',       dot: 'bg-warning' },
+  READY_TO_SHIP:    { label: 'Ready',        cls: 'bg-warning/10 text-warning border-warning/10',       dot: 'bg-warning' },
+  BOOKED:           { label: 'Booked',       cls: 'bg-primary/10 text-primary border-primary/10',       dot: 'bg-primary' },
+  IN_TRANSIT:       { label: 'In Transit',   cls: 'bg-secondary/10 text-secondary border-secondary/10', dot: 'bg-secondary' },
+  OUT_FOR_DELIVERY: { label: 'Out for Del.', cls: 'bg-secondary/10 text-secondary border-secondary/10', dot: 'bg-secondary' },
+  DELIVERED:        { label: 'Delivered',    cls: 'bg-success/10 text-success border-success/10',       dot: 'bg-success' },
+  FAILED_DELIVERY:  { label: 'Failed',       cls: 'bg-error/10 text-error border-error/10',             dot: 'bg-error animate-pulse' },
+  RTO_INITIATED:    { label: 'RTO',          cls: 'bg-error/10 text-error border-error/10',             dot: 'bg-error animate-pulse' },
+  RTO_DELIVERED:    { label: 'RTO Delivered',cls: 'bg-error/10 text-error border-error/10',             dot: 'bg-error' },
+  CANCELLED:        { label: 'Cancelled',    cls: 'bg-muted/10 text-muted border-muted/10',             dot: 'bg-muted' },
+  ON_HOLD:          { label: 'On Hold',      cls: 'bg-warning/10 text-warning border-warning/10',       dot: 'bg-warning' },
 };
 
 const StatusBadge = ({ status }) => {
-  const cfg = statusConfig[status] || statusConfig['Cancelled'];
+  const cfg = statusConfig[status] || { label: status, cls: 'bg-muted/10 text-muted border-muted/10', dot: 'bg-muted' };
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wider ${cfg.cls}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-      {status}
+      {cfg.label}
     </span>
   );
 };
 
+const formatINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const formatDate = (iso) =>
+  iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+
 const tabs = ['All', 'New', 'In Transit', 'Delivered', 'RTO', 'NDR'];
+const tabStatusMap = {
+  New: ['NEW'],
+  'In Transit': ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'BOOKED'],
+  Delivered: ['DELIVERED'],
+  RTO: ['RTO_INITIATED', 'RTO_DELIVERED'],
+};
 
 const Orders = () => {
   const navigate = useNavigate();
@@ -53,6 +60,25 @@ const Orders = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [searchVal, setSearchVal] = useState('');
   const [selectedRows, setSelectedRows] = useState(new Set());
+  const [orders, setOrders] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    OrderService.list()
+      .then(({ data }) => {
+        if (!active) return;
+        setOrders(unwrap(data) || []);
+        setTotalCount(data.count ?? (unwrap(data) || []).length);
+      })
+      .catch(() => active && setOrders([]))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const toggleRow = (id) => {
     setSelectedRows(prev => {
@@ -62,12 +88,14 @@ const Orders = () => {
     });
   };
 
-  const filteredOrders = ordersData.filter(o => {
-    const matchTab = activeTab === 'All' || activeTab === 'New' || o.status === activeTab;
-    const matchSearch = !searchVal || 
-      o.id.toLowerCase().includes(searchVal.toLowerCase()) || 
-      o.awb.toLowerCase().includes(searchVal.toLowerCase()) ||
-      o.customer.toLowerCase().includes(searchVal.toLowerCase());
+  const filteredOrders = orders.filter(o => {
+    const tabStatuses = tabStatusMap[activeTab];
+    const matchTab = activeTab === 'All' || activeTab === 'NDR' || !tabStatuses || tabStatuses.includes(o.status);
+    const s = searchVal.toLowerCase();
+    const matchSearch = !searchVal ||
+      (o.order_number || '').toLowerCase().includes(s) ||
+      (o.awb_number || '').toLowerCase().includes(s) ||
+      (o.customer_name || '').toLowerCase().includes(s);
     return matchTab && matchSearch;
   });
 
@@ -96,7 +124,7 @@ const Orders = () => {
             onClick={() => alert('Processing selected orders...')}
             id="orders-process"
           >
-            {selectedRows.size > 0 ? `Process (${selectedRows.size})` : 'Process Orders (12)'}
+            {selectedRows.size > 0 ? `Process (${selectedRows.size})` : 'Process Orders'}
           </button>
         </div>
       </div>
@@ -236,24 +264,25 @@ const Orders = () => {
                     />
                   </td>
                   <td className="px-4 py-4" onClick={() => navigate(`/orders/${order.id}`)}>
-                    <div className="font-bold text-primary text-xs">{order.id}</div>
-                    <div className="text-[10px] text-muted mt-0.5">{order.date}</div>
+                    <div className="font-bold text-primary text-xs">{order.order_number}</div>
+                    <div className="text-[10px] text-muted mt-0.5">{formatDate(order.created_at)}</div>
                   </td>
                   <td className="px-4 py-4" onClick={() => navigate(`/orders/${order.id}`)}>
-                    <div className="font-semibold text-main text-xs">{order.customer}</div>
-                    <div className="text-[10px] text-muted mt-0.5">Shopify Store</div>
+                    <div className="font-semibold text-main text-xs">{order.customer_name}</div>
+                    <div className="text-[10px] text-muted mt-0.5 capitalize">{(order.channel_source || '').toLowerCase()}</div>
                   </td>
                   <td className="px-4 py-4" onClick={() => navigate(`/orders/${order.id}`)}>
-                    <span className="font-bold text-main text-xs">{order.amount}</span>
+                    <span className="font-bold text-main text-xs">{formatINR(order.order_amount)}</span>
+                    <div className="text-[10px] text-muted mt-0.5">{order.payment_type}</div>
                   </td>
                   <td className="px-4 py-4" onClick={() => navigate(`/orders/${order.id}`)}>
                     <StatusBadge status={order.status} />
                   </td>
                   <td className="px-4 py-4" onClick={() => navigate(`/orders/${order.id}`)}>
-                    <div className="text-xs font-medium text-main">{order.courier}</div>
-                    {order.awb !== '-' && (
+                    <div className="text-xs font-medium text-main">{order.carrier_name || '—'}</div>
+                    {order.awb_number && (
                       <div className="text-[10px] bg-primary/8 text-primary px-1.5 py-0.5 rounded mt-1 inline-block font-mono">
-                        {order.awb}
+                        {order.awb_number}
                       </div>
                     )}
                   </td>
@@ -293,7 +322,7 @@ const Orders = () => {
         {/* Pagination */}
         <div className="px-6 py-4 border-t border-main flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-[10px] text-muted font-bold tracking-widest uppercase">
-            Showing 1–{filteredOrders.length} of 452 orders
+            {loading ? 'Loading…' : `Showing 1–${filteredOrders.length} of ${totalCount} orders`}
           </p>
           <div className="flex items-center gap-1.5">
             <button className="p-1.5 bg-surface-light rounded-lg text-muted hover:text-primary disabled:opacity-30 transition-all" disabled>
