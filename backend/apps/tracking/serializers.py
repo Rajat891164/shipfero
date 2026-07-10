@@ -15,7 +15,7 @@ class TrackingTimelineSerializer(serializers.ModelSerializer):
         fields = [
             "tracking_id", "awb_number", "order_id", "merchant_name",
             "consignee_name", "consignee_city", "consignee_state", "consignee_pincode",
-            "status", "carrier_name", "expected_delivery_date",
+            "status", "carrier_name",
             "booked_at", "picked_up_at", "delivered_at",
             "status_events",
         ]

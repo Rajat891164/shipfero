@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from apps.shipments.models import Shipment, ShipmentStatusEvent
 from apps.ndr.models import NDR
+from core.utils import get_merchant
 
 from .models import WebhookLog
 from .serializers import TrackingTimelineSerializer
@@ -78,24 +79,30 @@ class CourierWebhookReceiverView(APIView):
         try:
             shipment = Shipment.objects.get(awb_number=tracking_number)
         except Shipment.DoesNotExist:
-            log.error_message = "Shipment not found."
-            log.save(update_fields=["error_message"])
-            return Response({"status": "ignored", "detail": "Shipment not found"}, status=status.HTTP_200_OK)
+            try:
+                shipment = Shipment.objects.get(tracking_id=tracking_number)
+            except Shipment.DoesNotExist:
+                log.error_message = "Shipment not found."
+                log.save(update_fields=["error_message"])
+                return Response({"status": "ignored", "detail": "Shipment not found"}, status=status.HTTP_200_OK)
 
-        # Mapping raw status to our standard status (simplified)
+        # Mapping raw status to our standard status (simplified).
+        # Order matters: "UNDELIVERED" contains "DELIVERED" as a substring, so
+        # the failure/RTO checks must run before the generic DELIVERED check.
+        raw_status_upper = raw_status.upper()
         mapped_status = None
         is_ndr = False
-        if "DELIVERED" in raw_status.upper():
-            mapped_status = Shipment.Status.DELIVERED
-        elif "IN TRANSIT" in raw_status.upper():
-            mapped_status = Shipment.Status.IN_TRANSIT
-        elif "OUT FOR DELIVERY" in raw_status.upper():
-            mapped_status = Shipment.Status.OUT_FOR_DELIVERY
-        elif "FAILED" in raw_status.upper() or "UNDELIVERED" in raw_status.upper():
-            mapped_status = Shipment.Status.DELIVERY_FAILED
+        if "UNDELIVERED" in raw_status_upper or "FAILED" in raw_status_upper:
+            mapped_status = Shipment.Status.FAILED_DELIVERY
             is_ndr = True
-        elif "RTO" in raw_status.upper() or "RETURN" in raw_status.upper():
+        elif "RTO" in raw_status_upper or "RETURN" in raw_status_upper:
             mapped_status = Shipment.Status.RTO_IN_TRANSIT
+        elif "OUT FOR DELIVERY" in raw_status_upper:
+            mapped_status = Shipment.Status.OUT_FOR_DELIVERY
+        elif "IN TRANSIT" in raw_status_upper:
+            mapped_status = Shipment.Status.IN_TRANSIT
+        elif "DELIVERED" in raw_status_upper:
+            mapped_status = Shipment.Status.DELIVERED
 
         if mapped_status:
             # Check idempotency
@@ -145,7 +152,7 @@ class TrackingAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         shipments = merchant.shipments.all()
 
         total = shipments.count()
