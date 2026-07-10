@@ -20,6 +20,7 @@ import {
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import useUIStore from '../../store/useUIStore';
+import { BillingService } from '../../services/api';
 
 function cn(...inputs) {
   return twMerge(clsx(inputs));
@@ -89,6 +90,17 @@ const Sidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { expandedMenus, setExpandedMenus } = useUIStore();
+  const [walletBalance, setWalletBalance] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    BillingService.wallet()
+      .then(({ data }) => active && setWalletBalance(data.balance))
+      .catch(() => active && setWalletBalance(null));
+    return () => {
+      active = false;
+    };
+  }, [location.pathname === '/wallet']);
 
   const toggleMenu = (label) => {
     setExpandedMenus(label);
@@ -195,7 +207,10 @@ const Sidebar = () => {
               <span className="text-[9px] text-muted font-bold tracking-[0.2em] uppercase">Wallet Balance</span>
             </div>
             <div className="text-xl font-bold text-main mb-3 flex items-baseline gap-1">
-              <span className="text-sm text-muted">₹</span>12,450.00
+              <span className="text-sm text-muted">₹</span>
+              {walletBalance === null
+                ? '—'
+                : Number(walletBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <button 
               onClick={() => navigate('/wallet')}

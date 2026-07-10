@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { MerchantService } from '../services/api';
+import useAuthStore from '../store/useAuthStore';
 import { 
   Package, 
   IndianRupee, 
@@ -92,8 +94,29 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
+const formatINR = (n) =>
+  `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
 const Dashboard = () => {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const [dash, setDash] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    MerchantService.dashboard()
+      .then(({ data }) => active && setDash(data))
+      .catch(() => active && setDash(null))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const overview = dash?.overview || {};
+  const pendingActions = dash?.pending_actions || [];
+  const firstName = (user?.company_name || 'there').split(' ')[0];
 
   return (
     <div className="space-y-7 animate-fade-up">
@@ -104,7 +127,7 @@ const Dashboard = () => {
             <div className="w-2 h-2 bg-success rounded-full animate-pulse shadow-neon-success" />
             <span className="text-[10px] font-bold uppercase tracking-widest text-muted">Live Dashboard</span>
           </div>
-          <h2 className="text-2xl font-bold text-main">Welcome back, Akshay!</h2>
+          <h2 className="text-2xl font-bold text-main">Welcome back, {firstName}!</h2>
           <p className="text-muted text-sm mt-0.5">Here's what's happening with your shipments today.</p>
         </div>
         <button
@@ -121,35 +144,32 @@ const Dashboard = () => {
         <StatCard
           icon={Package}
           label="Total Orders Today"
-          value="452"
-          subtext="24 pending pickup"
-          trend={12.5}
+          value={loading ? '—' : (overview.total_orders_today ?? 0)}
+          subtext="New orders today"
           gradient="bg-gradient-to-br from-primary to-primary-dark"
           onClick={() => navigate('/orders')}
         />
         <StatCard
           icon={IndianRupee}
           label="Total Revenue Today"
-          value="₹1,24,500"
-          subtext="COD collections: ₹45,200"
-          trend={8.2}
+          value={loading ? '—' : formatINR(overview.total_revenue_today)}
+          subtext="Order value booked today"
           gradient="bg-gradient-to-br from-success to-primary"
           onClick={() => navigate('/wallet')}
         />
         <StatCard
           icon={AlertCircle}
           label="Pending Actions"
-          value="18"
-          subtext="NDR re-attempt required"
+          value={loading ? '—' : pendingActions.length}
+          subtext={pendingActions[0]?.message || 'All clear'}
           gradient="bg-gradient-to-br from-accent to-secondary"
           onClick={() => navigate('/ndr')}
         />
         <StatCard
           icon={Truck}
-          label="Active Shipments"
-          value="1,240"
-          subtext="Avg TAT: 3.2 days"
-          trend={-2.4}
+          label="Shipments Booked Today"
+          value={loading ? '—' : (overview.total_shipments_booked_today ?? 0)}
+          subtext={`Wallet: ${formatINR(overview.wallet_balance)}`}
           gradient="bg-gradient-to-br from-secondary to-secondary-dark"
           onClick={() => navigate('/track')}
         />
