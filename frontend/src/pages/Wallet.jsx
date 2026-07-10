@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { 
-  Wallet as WalletIcon, 
-  ArrowUpRight, 
-  ArrowDownRight, 
-  Download, 
-  Search, 
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Wallet as WalletIcon,
+  ArrowUpRight,
+  ArrowDownRight,
+  Download,
+  Search,
   History,
   CreditCard,
   Building,
@@ -15,24 +15,53 @@ import {
   ChevronRight,
   X
 } from 'lucide-react';
-
-const transactions = [
-  { id: 'TXN-001', type: 'Credit', desc: 'Wallet Recharge',               date: '21 Apr 2026', amount: '+₹5,000',  status: 'Success' },
-  { id: 'TXN-002', type: 'Debit',  desc: 'Shipping Charges (ORD-7721)',   date: '21 Apr 2026', amount: '-₹145',    status: 'Success' },
-  { id: 'TXN-003', type: 'Debit',  desc: 'RTO Charges (ORD-7718)',        date: '20 Apr 2026', amount: '-₹45',     status: 'Success' },
-  { id: 'TXN-004', type: 'Credit', desc: 'COD Remittance',                date: '19 Apr 2026', amount: '+₹12,400', status: 'Pending' },
-];
+import { BillingService, unwrap } from '../services/api';
 
 const quickAmounts = ['500', '1000', '2000', '5000'];
+
+// Which transaction types are money-in vs money-out.
+const CREDIT_TYPES = ['RECHARGE', 'COD_CREDIT', 'REFUND', 'REVERSAL'];
+const formatINR = (n) =>
+  `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatDate = (iso) =>
+  iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 const Wallet = () => {
   const [amount, setAmount] = useState('');
   const [searchTxn, setSearchTxn] = useState('');
+  const [summary, setSummary] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [recharging, setRecharging] = useState(false);
+
+  const load = useCallback(() => {
+    BillingService.summary().then(({ data }) => setSummary(data)).catch(() => {});
+    BillingService.transactions()
+      .then(({ data }) => setTransactions(unwrap(data) || []))
+      .catch(() => setTransactions([]));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleRecharge = async () => {
+    if (!amount || parseFloat(amount) < 500) return;
+    setRecharging(true);
+    try {
+      await BillingService.addFunds({ amount, description: 'Wallet recharge' });
+      setAmount('');
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Recharge failed.');
+    } finally {
+      setRecharging(false);
+    }
+  };
 
   const filteredTxns = transactions.filter(t =>
     !searchTxn ||
-    t.id.toLowerCase().includes(searchTxn.toLowerCase()) ||
-    t.desc.toLowerCase().includes(searchTxn.toLowerCase())
+    (t.txn_id || '').toLowerCase().includes(searchTxn.toLowerCase()) ||
+    (t.description || '').toLowerCase().includes(searchTxn.toLowerCase())
   );
 
   return (
@@ -70,19 +99,21 @@ const Wallet = () => {
             <div>
               <p className="text-[10px] font-bold text-muted uppercase tracking-widest mb-3">Available Balance</p>
               <h3 className="text-5xl font-bold text-main tracking-tight">
-                <span className="text-2xl text-muted mr-1">₹</span>12,450.25
+                <span className="text-2xl text-muted mr-1">₹</span>
+                {summary
+                  ? Number(summary.wallet_balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : '—'}
               </h3>
-              <div className="flex items-center gap-2 mt-3 text-xs font-bold text-success">
-                <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>24% increase</span>
-                <span className="text-muted font-normal">vs last month</span>
+              <div className="flex items-center gap-2 mt-3 text-xs font-bold text-muted">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Total recharged: {summary ? formatINR(summary.total_recharged) : '—'}</span>
               </div>
 
               {/* Mini stats */}
               <div className="mt-7 grid grid-cols-2 gap-3">
                 {[
-                  { label: 'On Hold', value: '₹2,100', color: 'text-warning' },
-                  { label: 'COD Remittance', value: '₹8,450', color: 'text-success' },
+                  { label: 'Total Spent', value: summary ? formatINR(summary.total_spent) : '—', color: 'text-error' },
+                  { label: 'COD Credited', value: summary ? formatINR(summary.total_cod_credited) : '—', color: 'text-success' },
                 ].map(({ label, value, color }) => (
                   <div key={label} className="p-3.5 bg-surface-light/60 rounded-2xl hover:bg-surface-hover transition-colors">
                     <p className="text-[9px] text-muted font-bold uppercase tracking-wider mb-1.5">{label}</p>
@@ -131,11 +162,11 @@ const Wallet = () => {
 
               <button
                 className="w-full neon-button-primary !py-4 flex items-center justify-center gap-2 group/btn text-sm"
-                onClick={() => alert(`Initiating recharge of ₹${amount} via Payment Gateway...`)}
-                disabled={!amount || parseFloat(amount) < 500}
+                onClick={handleRecharge}
+                disabled={!amount || parseFloat(amount) < 500 || recharging}
                 id="wallet-recharge-btn"
               >
-                Recharge Wallet
+                {recharging ? 'Processing…' : 'Recharge Wallet'}
                 <Zap className="w-4 h-4 group-hover/btn:scale-125 group-hover/btn:text-yellow-200 transition-all duration-200" />
               </button>
 
@@ -206,7 +237,7 @@ const Wallet = () => {
             <History className="text-muted w-4 h-4" />
             <div>
               <h3 className="font-bold text-main text-sm">Recent Transactions</h3>
-              <p className="text-[10px] text-muted mt-0.5">{transactions.length} transactions found</p>
+              <p className="text-[10px] text-muted mt-0.5">{filteredTxns.length} transactions found</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -237,51 +268,54 @@ const Wallet = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredTxns.map((txn) => (
+              {filteredTxns.map((txn) => {
+                const isCredit = CREDIT_TYPES.includes(txn.txn_type);
+                return (
                 <tr key={txn.id} className="group">
                   <td className="px-6 py-4">
-                    <span className="font-bold text-primary text-xs">{txn.id}</span>
+                    <span className="font-bold text-primary text-xs font-mono">{txn.txn_id}</span>
                   </td>
                   <td className="px-4 py-4">
                     <div className="flex items-center gap-3">
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                        txn.type === 'Credit' ? 'bg-success/10 text-success' : 'bg-error/10 text-error'
+                        isCredit ? 'bg-success/10 text-success' : 'bg-error/10 text-error'
                       }`}>
-                        {txn.type === 'Credit'
+                        {isCredit
                           ? <ArrowDownRight className="w-3.5 h-3.5" />
                           : <ArrowUpRight className="w-3.5 h-3.5" />
                         }
                       </div>
-                      <span className="font-medium text-main text-xs">{txn.desc}</span>
+                      <span className="font-medium text-main text-xs">{txn.description || txn.txn_type}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-muted text-xs">{txn.date}</td>
+                  <td className="px-4 py-4 text-muted text-xs">{formatDate(txn.created_at)}</td>
                   <td className={`px-4 py-4 text-right font-bold text-xs ${
-                    txn.type === 'Credit' ? 'text-success' : 'text-main'
+                    isCredit ? 'text-success' : 'text-main'
                   }`}>
-                    {txn.amount}
+                    {isCredit ? '+' : '-'}{formatINR(txn.amount)}
                   </td>
                   <td className="px-4 py-4">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                      txn.status === 'Success'
+                      txn.status === 'SUCCESS'
                         ? 'bg-success/10 text-success'
                         : 'bg-warning/10 text-warning'
                     }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${txn.status === 'Success' ? 'bg-success' : 'bg-warning animate-pulse'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${txn.status === 'SUCCESS' ? 'bg-success' : 'bg-warning animate-pulse'}`} />
                       {txn.status}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
                       className="p-1.5 bg-surface-light rounded-lg text-muted hover:text-primary transition-all active:scale-90 opacity-0 group-hover:opacity-100"
-                      onClick={() => alert(`Showing receipt for ${txn.id}`)}
+                      onClick={() => alert(`Transaction ${txn.txn_id}`)}
                       title="View receipt"
                     >
                       <Search className="w-3.5 h-3.5" />
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filteredTxns.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center">
