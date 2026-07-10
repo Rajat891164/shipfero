@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.shipments.models import Shipment
+from core.utils import get_merchant
 
 from .models import Return, Refund
 from .serializers import (
@@ -24,7 +25,7 @@ class ReturnListView(generics.ListAPIView):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        merchant = self.request.user.merchant
+        merchant = get_merchant(self.request)
         qs = Return.objects.filter(
             original_shipment__merchant=merchant
         ).select_related("original_shipment", "return_carrier")
@@ -54,7 +55,7 @@ class ReturnDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return Return.objects.filter(
-            original_shipment__merchant=self.request.user.merchant
+            original_shipment__merchant=get_merchant(self.request)
         ).select_related("original_shipment", "return_carrier", "refund")
 
 
@@ -70,7 +71,7 @@ class CreateReversePickupView(APIView):
         try:
             shipment = Shipment.objects.get(
                 pk=data["original_shipment_id"],
-                merchant=request.user.merchant,
+                merchant=get_merchant(request),
             )
         except Shipment.DoesNotExist:
             return Response({"detail": "Shipment not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -112,7 +113,7 @@ class MarkReceivedView(APIView):
         try:
             return_record = Return.objects.get(
                 pk=pk,
-                original_shipment__merchant=request.user.merchant,
+                original_shipment__merchant=get_merchant(request),
             )
         except Return.DoesNotExist:
             return Response({"detail": "Return not found."}, status=status.HTTP_404_NOT_FOUND)
@@ -147,7 +148,7 @@ class ReturnStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        merchant = request.user.merchant
+        merchant = get_merchant(request)
         returns = Return.objects.filter(original_shipment__merchant=merchant)
 
         return Response({
