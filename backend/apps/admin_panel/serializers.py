@@ -89,9 +89,45 @@ class AdminMerchantStatusSerializer(serializers.Serializer):
 # ─── Carrier Management ────────────────────────────────────────────────────────
 
 class AdminCarrierSerializer(serializers.ModelSerializer):
+    api_key_masked = serializers.SerializerMethodField()
+    api_secret_masked = serializers.SerializerMethodField()
+
     class Meta:
         model = Carrier
-        fields = "__all__"
+        fields = [
+            "id", "name", "code", "logo_url", "website_url",
+            "supports_cod", "supports_prepaid", "supports_express",
+            "supports_same_day", "supports_reverse",
+            "max_weight_kg", "min_weight_kg",
+            "api_endpoint", "api_key", "api_secret",
+            "api_key_masked", "api_secret_masked",
+            "status", "priority", "created_at", "updated_at",
+        ]
+        extra_kwargs = {
+            "api_key": {"write_only": True, "required": False},
+            "api_secret": {"write_only": True, "required": False},
+        }
+
+    def get_api_key_masked(self, obj):
+        from core.encryption import decrypt_value, mask_value
+        return mask_value(decrypt_value(obj.api_key))
+
+    def get_api_secret_masked(self, obj):
+        from core.encryption import decrypt_value, mask_value
+        return mask_value(decrypt_value(obj.api_secret))
+
+    def _encrypt_credentials(self, validated_data):
+        from core.encryption import encrypt_value
+        for field in ("api_key", "api_secret"):
+            if validated_data.get(field):
+                validated_data[field] = encrypt_value(validated_data[field])
+        return validated_data
+
+    def create(self, validated_data):
+        return super().create(self._encrypt_credentials(validated_data))
+
+    def update(self, instance, validated_data):
+        return super().update(instance, self._encrypt_credentials(validated_data))
 
 
 class AdminServiceablePincodeSerializer(serializers.ModelSerializer):
