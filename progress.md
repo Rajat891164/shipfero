@@ -2,11 +2,42 @@
 
 > **Kaise use karna:** Jaise-jaise kaam hota jaaye, yahan status update karte jao.
 > **Legend:** ✅ Done & verified · 🟡 Code written, not verified · 🔴 Broken/blocker · ⬜ Not started
-> **Last updated:** 2026-07-10 (Phase 1 complete — all 12 core PRD modules verified end-to-end)
+> **Last updated:** 2026-07-11 (Phase 2 in progress — frontend integration)
 
 ---
 
-## 🎯 Current Real State
+## 🚧 Phase 2 — Frontend Integration (in progress)
+
+Frontend moved into monorepo at `frontend/` (was `D:\My files\ship\Admin_UI`). CORS configured, api.js fully rewritten against the real backend, JWT refresh implemented. Wiring pages one by one.
+
+**Frontend page status (16 pages):**
+
+| Page | Status |
+|------|--------|
+| Login (+ JWT auth) | ✅ wired & live-verified |
+| Dashboard (+ sidebar wallet) | ✅ wired & live-verified |
+| Orders (list) | ✅ wired & live-verified |
+| Wallet (+ recharge write path) | ✅ wired & live-verified |
+| NDR (+ re-attempt action) | ✅ wired & live-verified |
+| Track | ✅ wired (syntax-ok; live re-verify pending) |
+| Onboarding | 🔴 **broken** — still calls old AuthService methods (register/verifyEmail/uploadKYC/...) removed in the api.js rewrite |
+| CourierSettings | 🔴 **broken** — imports LogisticsService, removed in the api.js rewrite |
+| OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics | ⬜ still mock data |
+| AddOns | ⬜ mock (no backend — lowest priority) |
+
+**Tally:** 6 wired · 2 broken (regressions to fix) · 8 pending.
+
+**Next (frontend):**
+1. Fix the 2 regressions (Onboarding → real signup/OTP/onboarding endpoints; CourierSettings → CourierService).
+2. Re-verify Track live.
+3. Wire remaining mock pages: OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics.
+4. Phase 3 backend: Celery + S3, then Add-ons/Gen AI.
+
+**Frontend commits so far:** `f0b4a7d` (monorepo move), `4838814` (CORS), `1b4627c` (api.js + Login), `06a177d` (Dashboard + sidebar), `c381577` (Orders), `069537f` (Wallet), NDR, `2309581` (Track).
+
+---
+
+## 🎯 Backend Real State
 
 Backend runs cleanly, fully migrated to real PostgreSQL, and **every core PRD module (2–14, excluding Add-ons/Gen AI which PRD itself defers) has been reviewed, bug-fixed, and verified end-to-end against the live DB** — not just "code exists," actually exercised via curl with a real merchant JWT and checked against direct DB reads.
 
