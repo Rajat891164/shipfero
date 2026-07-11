@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { 
-  Search, 
-  Truck, 
-  Package, 
-  MapPin, 
-  CheckCircle2, 
-  Clock, 
+import {
+  Search,
+  Truck,
+  Package,
+  MapPin,
+  CheckCircle2,
+  Clock,
   ArrowRight,
   Info,
   Calendar,
@@ -13,15 +13,25 @@ import {
   Copy,
   RefreshCw
 } from 'lucide-react';
+import { TrackingService } from '../services/api';
 
-const timeline = [
-  { status: 'Delivered',           location: 'Gurgaon Sec-45',              date: '21 Apr, 02:30 PM', completed: true, current: true,  remark: 'Delivered at Gate' },
-  { status: 'Out for Delivery',    location: 'Gurgaon Hub',                 date: '21 Apr, 09:15 AM', completed: true, current: false },
-  { status: 'Reached Hub',         location: 'Gurgaon North Hub',           date: '20 Apr, 11:45 PM', completed: true, current: false },
-  { status: 'In Transit',          location: 'New Delhi Transit Point',      date: '20 Apr, 04:20 PM', completed: true, current: false },
-  { status: 'Picked Up',           location: 'Merchant Warehouse, Bengaluru', date: '19 Apr, 10:00 AM', completed: true, current: false },
-  { status: 'Order Manifested',    location: 'Bengaluru',                   date: '18 Apr, 08:30 PM', completed: true, current: false },
-];
+const formatDateTime = (iso) =>
+  iso ? new Date(iso).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+
+// Build the visual timeline (latest first) from a shipment's status_events.
+const buildTimeline = (shipment) => {
+  const events = [...(shipment.status_events || [])].sort(
+    (a, b) => new Date(b.event_time) - new Date(a.event_time)
+  );
+  return events.map((e, i) => ({
+    status: (e.status || '').replace(/_/g, ' '),
+    location: e.location || shipment.carrier_name || '',
+    date: formatDateTime(e.event_time),
+    completed: true,
+    current: i === 0,
+    remark: e.description || '',
+  }));
+};
 
 const TrackingEvent = ({ event, isLast }) => (
   <div className="flex gap-4 relative group">
@@ -74,19 +84,31 @@ const TrackingEvent = ({ event, isLast }) => (
 );
 
 const Track = () => {
-  const [awb, setAwb] = useState('1442155261');
-  const [hasSearched, setHasSearched] = useState(true);
+  const [awb, setAwb] = useState('');
+  const [hasSearched, setHasSearched] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
 
-  const handleTrack = () => {
+  const handleTrack = async () => {
     if (!awb.trim()) return;
     setIsTracking(true);
-    setTimeout(() => {
-      setIsTracking(false);
+    setError('');
+    try {
+      const { data } = await TrackingService.timeline(awb.trim());
+      setResult(data);
       setHasSearched(true);
-    }, 1200);
+    } catch (err) {
+      setResult(null);
+      setHasSearched(true);
+      setError(err.response?.data?.detail || 'Tracking number not found.');
+    } finally {
+      setIsTracking(false);
+    }
   };
+
+  const timeline = result ? buildTimeline(result) : [];
 
   const handleCopy = () => {
     navigator.clipboard.writeText(awb);
@@ -153,8 +175,16 @@ const Track = () => {
         </div>
       </div>
 
+      {/* Error / empty */}
+      {hasSearched && !result && (
+        <div className="glass-card p-8 text-center text-muted animate-fade-up">
+          <Package className="w-10 h-10 text-muted/30 mx-auto mb-3" />
+          <p className="text-sm font-bold">{error || 'No shipment found.'}</p>
+        </div>
+      )}
+
       {/* Tracking Result */}
-      {hasSearched && (
+      {result && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-up">
           {/* Timeline */}
           <div className="lg:col-span-2">
@@ -167,7 +197,7 @@ const Track = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-main flex items-center gap-2">
-                      AWB: {awb}
+                      {result.awb_number || result.tracking_id}
                       <button
                         onClick={handleCopy}
                         className="text-muted hover:text-primary transition-colors"
@@ -176,14 +206,16 @@ const Track = () => {
                         {copied ? <CheckCircle2 className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
                     </h3>
-                    <p className="text-xs text-muted font-medium mt-0.5">ORD-7721 · Domestic Express · PREPAID</p>
+                    <p className="text-xs text-muted font-medium mt-0.5">
+                      {result.order_id} · {(result.status || '').replace(/_/g, ' ')}
+                    </p>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-[9px] text-muted font-bold uppercase tracking-widest mb-1">Courier Partner</p>
                   <div className="flex items-center gap-2 justify-end">
                     <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                    <span className="font-bold text-main text-sm">Delhivery</span>
+                    <span className="font-bold text-main text-sm">{result.carrier_name || '—'}</span>
                   </div>
                 </div>
               </div>
@@ -207,9 +239,10 @@ const Track = () => {
               <div className="space-y-4">
                 <div>
                   <label className="text-[9px] text-muted font-bold uppercase tracking-widest block mb-1">Consignee</label>
-                  <p className="text-sm font-bold text-main">Rahul Sharma</p>
+                  <p className="text-sm font-bold text-main">{result.consignee_name}</p>
                   <p className="text-xs text-muted leading-relaxed mt-0.5">
-                    House No 45, DLF Phase 1,<br />Gurgaon, Haryana – 122002
+                    {result.consignee_city}{result.consignee_state ? `, ${result.consignee_state}` : ''}
+                    {result.consignee_pincode ? ` – ${result.consignee_pincode}` : ''}
                   </p>
                 </div>
                 <div className="flex gap-2 pt-1">
