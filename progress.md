@@ -24,7 +24,7 @@ Frontend moved into monorepo at `frontend/` (was `D:\My files\ship\Admin_UI`). C
 | CourierSettings | ✅ **fixed & live-verified** (2026-07-15) — rewired to `CarrierService`/`CourierService`; add→test→list-refresh confirmed live, encrypted API key correctly masked (`f16a09b`) |
 | OrderDetail | ✅ wired & live-verified (2026-07-15: real order detail, status tracker, tracking_id AWB fallback) (`dc071ee`) |
 | Returns | ✅ wired & live-verified (2026-07-15: real return list w/ tab filters) (`dc071ee`) |
-| Pricing | ✅ wired & live-verified (2026-07-15: rate estimator via /compare returned 3 couriers; rate-card table empty as pricing.RateCard table is unseeded) (`dc071ee`) |
+| Pricing | ✅ wired & live-verified (2026-07-15: rate estimator via /compare returned 3 couriers; rate-card table shows 40 seeded cards across 5 zones, All/Bluedart/Delhivery filters work) (`dc071ee`, seed + all-pages fetch `8a21a3d`) |
 | Reports | ✅ wired & live-verified (2026-07-15: generate→201, recent list refreshed) (`8ee03d0`) |
 | Settings | ✅ wired & live-verified (2026-07-15: profile PATCH persisted across reload, API-key create→201 one-time key shown, revoke→204; KYC/Bank read-only tabs render real state) (`8ee03d0`) |
 | Integrations | ✅ wired & live-verified (2026-07-15: list real Shopify, sync→200 "5 orders", connect modal create→201 + URL-validation error surfaced) (`8ee03d0`) |
@@ -52,8 +52,8 @@ Backend runs cleanly, fully migrated to real PostgreSQL, and **every core PRD mo
 | Backend | Runs clean, `manage.py check` passes, all migrations applied — 48+ tables live in `shipfero_db` |
 | Core transaction flow | Signup → onboarding → courier/channel setup → order → process → book-AWB (wallet deducted) → tracking webhook → NDR → RTO/reverse-pickup → refund — **entire chain tested end-to-end in one continuous session** |
 | Regression sweep | 22 key endpoints across all modules → all return 200 with a real merchant token |
-| Frontend (Admin_UI) | Still not wired — `api.js` has old endpoint paths, needs Phase 2 rewrite |
-| Root `database/ frontend/ ui/ deployment/` | Khaali placeholders (unused) |
+| Frontend (`frontend/`) | ✅ Wired — 15/16 pages live-verified against the real backend (Phase 2 done, only AddOns deferred) |
+| Root `database/ ui/ deployment/` | Khaali placeholders (unused) |
 
 ---
 
@@ -165,3 +165,4 @@ Scaffolded (UI bana, backend se juda nahi): Login, Onboarding, Dashboard, Orders
 - **2026-07-10** — Initial verified audit. Docs created.
 - **2026-07-10** — **Phase 0 complete.** Backend migrated to real PostgreSQL, JWT routes fixed, onboarding verified end-to-end.
 - **2026-07-10** — **Phase 1 complete.** All 12 core PRD modules (2–11, 13, 14) reviewed, bug-fixed (11 real bugs beyond the recurring merchant-500 pattern — see table above), and verified end-to-end in one continuous session against real PostgreSQL. Full regression sweep of 22 endpoints all green. 12 commits, each independently revertable.
+- **2026-07-15** — **Phase 2 essentially complete.** Restored the local dev environment on the new machine (venv interpreter repointed, `shipfero_db` restored from the committed dump). Fixed the 2 broken pages (Onboarding, CourierSettings) and wired the remaining 7 mock pages (OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics) — all 15 non-AddOns pages now live-verified against the real backend. Seeded 5 pricing zones + 40 rate cards and refreshed the DB dump. Commits `f16a09b`, `dc071ee`, `8ee03d0`, `8a20827`, `1a179fc`, `8a21a3d`. Only AddOns remains (deferred — no backend). Next real work: Phase 3 (Celery + S3).
