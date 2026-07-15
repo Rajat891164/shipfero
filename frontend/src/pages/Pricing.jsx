@@ -8,7 +8,7 @@ import {
   X,
   ArrowRight
 } from 'lucide-react';
-import { PricingService, unwrap } from '../services/api';
+import { PricingService } from '../services/api';
 
 const WEIGHT_SLAB_LABEL = { '0.5': 'Below 500g', '1.0': 'Up to 1kg', '2.0': 'Up to 2kg', '5.0': 'Up to 5kg', '10.0': 'Up to 10kg', ADDITIONAL: 'Additional slab' };
 
@@ -23,10 +23,28 @@ const Pricing = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    PricingService.rateCards()
-      .then(({ data }) => setRates(unwrap(data) || []))
-      .catch(() => setRates([]))
-      .finally(() => setLoading(false));
+    // The rate-cards endpoint is paginated (20/page) with no page_size override,
+    // so walk every page to build the full rate card across all couriers.
+    const fetchAll = async () => {
+      const all = [];
+      let page = 1;
+      try {
+        // Cap the loop defensively; a real rate card is well under 20 pages.
+        for (let i = 0; i < 20; i += 1) {
+          const { data } = await PricingService.rateCards({ page });
+          if (Array.isArray(data)) { all.push(...data); break; }        // non-paginated fallback
+          all.push(...(data.results || []));
+          if (!data.next) break;
+          page += 1;
+        }
+        setRates(all);
+      } catch {
+        setRates(all);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAll();
   }, []);
 
   const couriers = ['All', ...new Set(rates.map((r) => r.carrier_name))];
