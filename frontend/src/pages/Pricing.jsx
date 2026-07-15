@@ -1,50 +1,60 @@
-import React, { useState } from 'react';
-import { 
-  TrendingUp, 
-  MapPin, 
-  Zap, 
+import React, { useEffect, useState } from 'react';
+import {
+  TrendingUp,
+  MapPin,
+  Zap,
   Info,
   BadgePercent,
-  ChevronDown,
-  Search,
   X,
   ArrowRight
 } from 'lucide-react';
+import { PricingService, unwrap } from '../services/api';
 
-const rates = [
-  { courier: 'Delhivery',    zone: 'Within City',       base: '₹45',  addl: '₹35', cod: '₹50 or 2%',   speed: '24–48 Hrs', color: '#00f2fe' },
-  { courier: 'Delhivery',    zone: 'Region (Zone B)',    base: '₹65',  addl: '₹55', cod: '₹50 or 2%',   speed: '3–4 Days',  color: '#00f2fe' },
-  { courier: 'BlueDart',     zone: 'Metro to Metro',     base: '₹85',  addl: '₹75', cod: '₹60 or 2.5%', speed: '24–36 Hrs', color: '#7000ff' },
-  { courier: 'XpressBees',   zone: 'Within City',        base: '₹38',  addl: '₹28', cod: '₹40 or 1.5%', speed: '48–72 Hrs', color: '#ff007a' },
-  { courier: 'Ecom Express', zone: 'Remote Location',    base: '₹120', addl: '₹95', cod: '₹100',        speed: '5–7 Days',  color: '#00ffa3' },
-];
-
-const speedColor = (s) => {
-  if (s.includes('24') || s.includes('36')) return 'text-success';
-  if (s.includes('48') || s.includes('72')) return 'text-warning';
-  return 'text-error';
-};
+const WEIGHT_SLAB_LABEL = { '0.5': 'Below 500g', '1.0': 'Up to 1kg', '2.0': 'Up to 2kg', '5.0': 'Up to 5kg', '10.0': 'Up to 10kg', ADDITIONAL: 'Additional slab' };
 
 const Pricing = () => {
   const [origin, setOrigin] = useState('');
   const [dest, setDest] = useState('');
   const [weight, setWeight] = useState('');
+  const [rates, setRates] = useState([]);
   const [activeCourier, setActiveCourier] = useState('All');
   const [calculating, setCalculating] = useState(false);
   const [calcResult, setCalcResult] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const couriers = ['All', ...new Set(rates.map(r => r.courier))];
+  useEffect(() => {
+    PricingService.rateCards()
+      .then(({ data }) => setRates(unwrap(data) || []))
+      .catch(() => setRates([]))
+      .finally(() => setLoading(false));
+  }, []);
 
-  const filteredRates = rates.filter(r => activeCourier === 'All' || r.courier === activeCourier);
+  const couriers = ['All', ...new Set(rates.map((r) => r.carrier_name))];
+  const filteredRates = rates.filter((r) => activeCourier === 'All' || r.carrier_name === activeCourier);
 
-  const handleEstimate = () => {
+  const handleEstimate = async () => {
     if (!origin || !dest || !weight) return alert('Please fill in all fields.');
     setCalculating(true);
     setCalcResult(null);
-    setTimeout(() => {
+    try {
+      const { data } = await PricingService.compare({
+        pickup_pincode: origin,
+        delivery_pincode: dest,
+        weight_kg: weight,
+        payment_type: 'PREPAID',
+      });
+      const options = data || [];
+      if (options.length === 0) {
+        setCalcResult(null);
+      } else {
+        const charges = options.map((o) => o.estimated_charge);
+        setCalcResult({ min: `₹${Math.min(...charges)}`, max: `₹${Math.max(...charges)}`, couriers: options.length });
+      }
+    } catch {
+      alert('Could not fetch a rate estimate. Please try again.');
+    } finally {
       setCalculating(false);
-      setCalcResult({ min: '₹45', max: '₹120', couriers: 3 });
-    }, 1200);
+    }
   };
 
   return (
@@ -93,7 +103,7 @@ const Pricing = () => {
                   <input
                     type="text"
                     value={value}
-                    onChange={e => set(e.target.value)}
+                    onChange={(e) => set(e.target.value)}
                     placeholder={placeholder}
                     className="input-field text-xs !py-3"
                     id={id}
@@ -147,7 +157,7 @@ const Pricing = () => {
         <div className="px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           {/* Courier filter pills */}
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-            {couriers.map(c => (
+            {couriers.map((c) => (
               <button
                 key={c}
                 onClick={() => setActiveCourier(c)}
@@ -172,46 +182,42 @@ const Pricing = () => {
             <thead>
               <tr>
                 <th className="px-6">Courier Partner</th>
-                <th className="px-4">Shipping Zone</th>
-                <th className="px-4 text-center">Below 500g</th>
-                <th className="px-4 text-center">Addl. 500g</th>
+                <th className="px-4">Zone</th>
+                <th className="px-4 text-center">Weight Slab</th>
+                <th className="px-4 text-center">Forward Charge</th>
                 <th className="px-4 text-center">COD Charge</th>
-                <th className="px-6 text-right">Est. TAT</th>
+                <th className="px-6 text-right">RTO Charge</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRates.map((rate, i) => (
-                <tr
-                  key={i}
-                  className="cursor-pointer group"
-                  onClick={() => alert(`Showing T&C for ${rate.courier} – ${rate.zone}`)}
-                >
+              {loading && (
+                <tr><td colSpan={6} className="px-6 py-12 text-center text-muted text-xs">Loading rate cards...</td></tr>
+              )}
+              {!loading && filteredRates.map((rate) => (
+                <tr key={rate.id} className="group">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div
-                        className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-[10px] group-hover:shadow-neon-sm transition-shadow bg-surface-light"
-                        style={{ color: rate.color }}
-                      >
-                        {rate.courier[0]}
+                      <div className="w-8 h-8 rounded-xl flex items-center justify-center font-bold text-[10px] group-hover:shadow-neon-sm transition-shadow bg-surface-light text-primary">
+                        {(rate.carrier_name || '?')[0]}
                       </div>
-                      <span className="font-semibold text-main text-xs">{rate.courier}</span>
+                      <span className="font-semibold text-main text-xs">{rate.carrier_name}</span>
                     </div>
                   </td>
                   <td className="px-4 py-4">
                     <div className="flex items-center gap-2 text-xs text-muted">
                       <MapPin className="w-3 h-3 flex-shrink-0" />
-                      {rate.zone}
+                      Zone {rate.zone_code}
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-center font-bold text-main text-xs">{rate.base}</td>
-                  <td className="px-4 py-4 text-center text-muted text-xs">{rate.addl}</td>
-                  <td className="px-4 py-4 text-center text-muted text-xs">{rate.cod}</td>
+                  <td className="px-4 py-4 text-center text-xs text-muted">{WEIGHT_SLAB_LABEL[rate.weight_slab] || rate.weight_slab}</td>
+                  <td className="px-4 py-4 text-center font-bold text-main text-xs">₹{rate.forward_charge}</td>
+                  <td className="px-4 py-4 text-center text-muted text-xs">₹{rate.cod_min_charge} or {rate.cod_percentage}%</td>
                   <td className="px-6 py-4 text-right">
-                    <span className={`text-xs font-bold ${speedColor(rate.speed)}`}>{rate.speed}</span>
+                    <span className="text-xs font-bold text-main">₹{rate.rto_charge}</span>
                   </td>
                 </tr>
               ))}
-              {filteredRates.length === 0 && (
+              {!loading && filteredRates.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center">
                     <TrendingUp className="w-8 h-8 text-muted/30 mx-auto mb-3" />
