@@ -1,65 +1,62 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { 
-  Truck, 
-  CheckCircle2, 
-  XCircle, 
-  MapPin, 
+import {
+  Truck,
+  CheckCircle2,
   ArrowRight,
   ShieldCheck,
   Zap,
-  Star,
   Activity,
-  Package,
-  RefreshCw,
-  AlertTriangle
+  RefreshCw
 } from 'lucide-react';
+import { CarrierService, unwrap } from '../services/api';
 
 const serviceabilitySchema = z.object({
-  pickupPincode:   z.string().length(6, 'Must be 6 digits'),
+  pickupPincode: z.string().length(6, 'Must be 6 digits'),
   deliveryPincode: z.string().length(6, 'Must be 6 digits'),
-  weight:          z.string().refine(v => !isNaN(parseFloat(v)) && parseFloat(v) > 0, { message: 'Enter a positive number' }),
+  weight: z.string().refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) > 0, { message: 'Enter a positive number' }),
 });
 
-const couriers = [
-  { name: 'Delhivery',    type: 'Surface / Air', rating: 4.8, status: 'Active',      weightMax: '20 kg', reach: '29,000+ Pincodes', speed: '2–4 Days',  color: '#00f2fe' },
-  { name: 'BlueDart',     type: 'Premium Air',   rating: 4.9, status: 'Active',      weightMax: '10 kg', reach: '18,000+ Pincodes', speed: '1–2 Days',  color: '#7000ff' },
-  { name: 'XpressBees',   type: 'Surface',       rating: 4.2, status: 'Active',      weightMax: '30 kg', reach: '25,000+ Pincodes', speed: '3–5 Days',  color: '#ff007a' },
-  { name: 'Ecom Express', type: 'Surface',       rating: 4.0, status: 'Maintenance', weightMax: '25 kg', reach: '27,000+ Pincodes', speed: '3–6 Days',  color: '#00ffa3' },
-];
-
 const feats = [
-  { title: 'Smart Courier Selection', desc: 'Auto-assign the best courier based on price, zone, and performance history.', icon: Zap,        color: 'primary' },
-  { title: 'Transit Insurance',       desc: 'Coverage up to ₹10,000 on every high-value package automatically.', icon: ShieldCheck, color: 'secondary' },
-  { title: 'Real-time Webhooks',      desc: 'Instant push notifications on delivery attempts, delays, and RTO events.', icon: Activity,   color: 'success' },
+  { title: 'Smart Courier Selection', desc: 'Auto-assign the best courier based on price, zone, and performance history.', icon: Zap, color: 'primary' },
+  { title: 'Transit Insurance', desc: 'Coverage up to ₹10,000 on every high-value package automatically.', icon: ShieldCheck, color: 'secondary' },
+  { title: 'Real-time Webhooks', desc: 'Instant push notifications on delivery attempts, delays, and RTO events.', icon: Activity, color: 'success' },
 ];
-
-const StarRating = ({ rating }) => (
-  <div className="flex items-center gap-0.5">
-    {[1,2,3,4,5].map(i => (
-      <Star key={i} className={`w-3 h-3 ${i <= Math.round(rating) ? 'text-warning fill-warning' : 'text-muted/30'}`} />
-    ))}
-    <span className="text-[10px] font-bold text-muted ml-1">{rating}</span>
-  </div>
-);
 
 const Logistics = () => {
   const [isChecking, setIsChecking] = useState(false);
   const [result, setResult] = useState(null);
+  const [carriers, setCarriers] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(serviceabilitySchema),
   });
 
-  const onSubmit = () => {
+  useEffect(() => {
+    CarrierService.list()
+      .then(({ data }) => setCarriers(unwrap(data) || []))
+      .catch(() => setCarriers([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const onSubmit = async (formData) => {
     setIsChecking(true);
     setResult(null);
-    setTimeout(() => {
+    try {
+      const { data } = await CarrierService.serviceability({
+        pickup_pincode: formData.pickupPincode,
+        delivery_pincode: formData.deliveryPincode,
+        weight: formData.weight,
+      });
+      setResult(data);
+    } catch {
+      setResult({ results: [] });
+    } finally {
       setIsChecking(false);
-      setResult({ available: true, couriers: ['Delhivery', 'BlueDart', 'XpressBees'], estDays: '2–3 Days' });
-    }, 1500);
+    }
   };
 
   return (
@@ -144,19 +141,23 @@ const Logistics = () => {
             {/* Result */}
             {result && (
               <div className="mt-4 p-4 bg-success/8 rounded-2xl animate-fade-up">
-                <div className="flex items-center gap-2 text-success font-bold text-xs mb-3">
-                  <CheckCircle2 className="w-4 h-4" /> Serviceable Area
-                </div>
-                <p className="text-[10px] text-muted mb-2">Available via:</p>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {result.couriers.map(c => (
-                    <span key={c} className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-[10px] font-bold">{c}</span>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-[10px] text-muted font-bold uppercase">Est. Delivery</span>
-                  <span className="text-xs font-bold text-primary">{result.estDays}</span>
-                </div>
+                {(result.results || []).length > 0 ? (
+                  <>
+                    <div className="flex items-center gap-2 text-success font-bold text-xs mb-3">
+                      <CheckCircle2 className="w-4 h-4" /> Serviceable Area
+                    </div>
+                    <div className="space-y-2">
+                      {result.results.map((r) => (
+                        <div key={r.carrier_id} className="flex items-center justify-between text-xs">
+                          <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-[10px] font-bold">{r.carrier_name}</span>
+                          <span className="text-muted">{r.estimated_days} · ₹{r.estimated_rate}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted">No couriers serviceable for this route.</p>
+                )}
               </div>
             )}
           </div>
@@ -167,7 +168,7 @@ const Logistics = () => {
           <div className="flex justify-between items-center mb-6">
             <div>
               <h3 className="font-bold text-main text-sm">Integrated Courier Partners</h3>
-              <p className="text-[10px] text-muted mt-0.5">4 of 12 active partners shown</p>
+              <p className="text-[10px] text-muted mt-0.5">{carriers.length} partner{carriers.length !== 1 ? 's' : ''} in catalog</p>
             </div>
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-success/8 text-success rounded-full text-[10px] font-bold">
               <div className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
@@ -175,68 +176,59 @@ const Logistics = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {couriers.map((courier, i) => (
-              <button
-                key={i}
-                className="p-4 bg-surface-light rounded-2xl flex items-center justify-between group hover:bg-surface-hover transition-all duration-200 active:scale-[0.98] text-left w-full"
-                onClick={() => alert(`Opening ${courier.name} performance details`)}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs group-hover:shadow-neon-sm transition-shadow bg-surface"
-                    style={{ color: courier.color }}
-                  >
-                    {courier.name[0]}
+          {loading ? (
+            <div className="py-12 text-center text-muted text-sm">Loading carriers...</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {carriers.map((courier) => (
+                <div key={courier.id} className="p-4 bg-surface-light rounded-2xl flex items-center justify-between group hover:bg-surface-hover transition-all duration-200 text-left w-full">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs group-hover:shadow-neon-sm transition-shadow bg-surface text-primary">
+                      {courier.name[0]}
+                    </div>
+                    <div className="text-left">
+                      <h4 className="font-bold text-sm text-main">{courier.name}</h4>
+                      <div className="flex gap-1 mt-1">
+                        {courier.supports_cod && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-primary/10 text-primary rounded uppercase">COD</span>}
+                        {courier.supports_express && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-secondary/10 text-secondary rounded uppercase">Express</span>}
+                        {courier.supports_reverse && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-warning/10 text-warning rounded uppercase">Reverse</span>}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <h4 className="font-bold text-sm text-main">{courier.name}</h4>
-                    <p className="text-[10px] text-muted uppercase font-bold tracking-wider mt-0.5">{courier.reach}</p>
-                    <StarRating rating={courier.rating} />
+                  <div className="text-right flex-shrink-0 ml-2">
+                    <span className={`text-[9px] font-bold uppercase tracking-widest block mb-1 ${
+                      courier.status === 'ACTIVE' ? 'text-success' : 'text-warning'
+                    }`}>
+                      {courier.status === 'ACTIVE' ? '● Active' : `⚠ ${courier.status}`}
+                    </span>
+                    <span className="text-[10px] text-muted font-medium">Up to {courier.max_weight_kg} kg</span>
                   </div>
                 </div>
-                <div className="text-right flex-shrink-0 ml-2">
-                  <span className={`text-[9px] font-bold uppercase tracking-widest block mb-1 ${
-                    courier.status === 'Active' ? 'text-success' : 'text-warning'
-                  }`}>
-                    {courier.status === 'Active' ? '● Active' : '⚠ Maintenance'}
-                  </span>
-                  <span className="text-[10px] text-muted font-medium">{courier.speed}</span>
-                  <p className="text-[10px] text-muted mt-0.5">{courier.weightMax}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          <button
-            className="mt-5 text-xs text-primary font-bold flex items-center gap-2 hover:gap-3 hover:text-primary-dark transition-all duration-200"
-            onClick={() => alert('Navigating to full courier partners list...')}
-          >
-            Manage All 12 Courier Partners <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+              ))}
+              {carriers.length === 0 && (
+                <p className="col-span-2 text-center text-muted text-xs py-8">No carriers in the catalog yet.</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Feature Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {feats.map(({ title, desc, icon: Icon, color }) => (
-          <button
-            key={title}
-            className="glass-card glass-card-hover p-5 flex items-start gap-4 group text-left w-full"
-            onClick={() => alert(`Opening details for: ${title}`)}
-          >
-            <div className={`p-3 rounded-xl transition-all duration-200 flex-shrink-0 ${
-              color === 'primary'   ? 'bg-primary/10 text-primary group-hover:bg-primary group-hover:text-background' :
-              color === 'secondary' ? 'bg-secondary/10 text-secondary group-hover:bg-secondary group-hover:text-white' :
-                                     'bg-success/10 text-success group-hover:bg-success group-hover:text-background'
+          <div key={title} className="glass-card p-5 flex items-start gap-4">
+            <div className={`p-3 rounded-xl flex-shrink-0 ${
+              color === 'primary' ? 'bg-primary/10 text-primary' :
+              color === 'secondary' ? 'bg-secondary/10 text-secondary' :
+                                       'bg-success/10 text-success'
             }`}>
               <Icon className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="font-bold text-sm text-main group-hover:text-primary transition-colors mb-1">{title}</h4>
+              <h4 className="font-bold text-sm text-main mb-1">{title}</h4>
               <p className="text-xs text-muted leading-relaxed">{desc}</p>
             </div>
-          </button>
+          </div>
         ))}
       </div>
     </div>
