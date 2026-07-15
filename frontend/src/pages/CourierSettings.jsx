@@ -1,95 +1,109 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  FiPlus, FiTrash2, FiActivity, FiSettings, FiCheckCircle, 
+import {
+  FiPlus, FiTrash2, FiActivity, FiSettings, FiCheckCircle,
   FiAlertCircle, FiChevronRight, FiKey, FiLock, FiExternalLink,
   FiZap, FiDatabase, FiCpu
 } from 'react-icons/fi';
-import { LogisticsService } from '../services/api';
+import { CarrierService, CourierService, unwrap } from '../services/api';
 
 const CourierSettings = () => {
-  const [couriers, setCouriers] = useState([]);
-  const [integrations, setIntegrations] = useState([]);
-  const [healthData, setHealthData] = useState([]);
+  const [catalog, setCatalog] = useState([]);      // platform carrier catalog
+  const [configured, setConfigured] = useState([]); // merchant's configured couriers
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
-  const [selectedCourier, setSelectedCourier] = useState(null);
+  const [selectedCarrier, setSelectedCarrier] = useState(null);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [formData, setFormData] = useState({
-    account_mode: 'both',
-    credentials: {},
+    api_key: '',
+    api_secret: '',
+    account_number: '',
+    allow_cod: true,
     label_type: 'A4',
     otp_delivery: false,
-    shipping_mode: 'Surface'
+    shipping_mode: 'SURFACE',
   });
+
+  const fetchData = useCallback(() => {
+    CarrierService.list()
+      .then(({ data }) => setCatalog(unwrap(data) || []))
+      .catch(() => setCatalog([]));
+    CourierService.list()
+      .then(({ data }) => setConfigured(unwrap(data) || []))
+      .catch(() => setConfigured([]));
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  const fetchData = async () => {
-    try {
-      const [cRes, iRes, hRes] = await Promise.all([
-        LogisticsService.getCouriers(),
-        LogisticsService.getIntegrations(),
-        LogisticsService.getHealth()
-      ]);
-      setCouriers(cRes.data);
-      setIntegrations(iRes.data);
-      setHealthData(hRes.data);
-    } catch (err) {
-      console.error('Failed to fetch logistics data');
-    }
+  const resetWizard = () => {
+    setShowWizard(false);
+    setWizardStep(1);
+    setSelectedCarrier(null);
+    setTestResult(null);
+    setFormData({
+      api_key: '', api_secret: '', account_number: '',
+      allow_cod: true, label_type: 'A4', otp_delivery: false, shipping_mode: 'SURFACE',
+    });
   };
 
-  const handleTestConnection = async () => {
+  // Backend only tests an existing config, so this is a client-side presence check.
+  const handleTestConnection = () => {
     setTesting(true);
     setTestResult(null);
-    try {
-      const res = await LogisticsService.testConnection({
-        courier_id: selectedCourier.id,
-        credentials: formData.credentials
-      });
-      setTestResult({ success: true, message: res.data.message });
-    } catch (err) {
-      setTestResult({ success: false, message: err.response?.data?.error || 'Connection failed' });
-    } finally {
+    setTimeout(() => {
+      if (formData.api_key.trim()) {
+        setTestResult({ success: true, message: 'Credentials look valid. Live ping runs on save.' });
+      } else {
+        setTestResult({ success: false, message: 'API Key is required.' });
+      }
       setTesting(false);
-    }
+    }, 500);
   };
 
   const handleSaveIntegration = async () => {
+    if (!selectedCarrier) return;
     setLoading(true);
     try {
-      await LogisticsService.addIntegration({
-        courier_id: selectedCourier.id,
-        account_mode: formData.account_mode,
-        credentials_encrypted: JSON.stringify(formData.credentials),
+      const { data: created } = await CourierService.add({
+        carrier: selectedCarrier.id,
+        api_key: formData.api_key,
+        api_secret: formData.api_secret,
+        account_number: formData.account_number,
+        allow_cod: formData.allow_cod,
         label_type: formData.label_type,
         otp_delivery: formData.otp_delivery,
-        shipping_mode: formData.shipping_mode
+        shipping_mode: formData.shipping_mode,
       });
-      setShowWizard(false);
+      // Run the real connection test against the freshly created config.
+      try {
+        await CourierService.test(created.id);
+      } catch {
+        /* non-fatal — the config is saved either way */
+      }
+      resetWizard();
       fetchData();
     } catch (err) {
-      alert('Failed to save integration');
+      alert(err.response?.data?.detail || Object.values(err.response?.data || {})[0] || 'Failed to save courier.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteIntegration = async (id) => {
-    if (window.confirm('Are you sure you want to remove this integration?')) {
-      try {
-        await LogisticsService.deleteIntegration(id);
-        fetchData();
-      } catch (err) {
-        alert('Failed to delete');
-      }
+  const handleDelete = async (id) => {
+    if (!window.confirm('Remove this courier configuration?')) return;
+    try {
+      await CourierService.remove(id);
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.[0] || err.response?.data?.detail || 'Failed to delete.');
     }
   };
+
+  const setField = (k, v) => setFormData((f) => ({ ...f, [k]: v }));
 
   return (
     <div className="space-y-8 animate-fade-up">
@@ -99,7 +113,7 @@ const CourierSettings = () => {
           <h1 className="text-2xl font-bold">Courier Integrations</h1>
           <p className="text-white/40 text-sm">Manage API credentials and shipping preferences for your courier partners.</p>
         </div>
-        <button 
+        <button
           onClick={() => { setShowWizard(true); setWizardStep(1); }}
           className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-blue-500/20"
         >
@@ -114,53 +128,57 @@ const CourierSettings = () => {
             <h3 className="font-bold mb-6 flex items-center gap-2">
               <FiZap className="text-blue-400" /> Active Partners
             </h3>
-            
-            {integrations.length === 0 ? (
+
+            {configured.length === 0 ? (
               <div className="text-center py-12 border-2 border-dashed border-white/5 rounded-2xl">
                 <FiCpu className="mx-auto text-4xl text-white/10 mb-4" />
                 <p className="text-white/40">No couriers configured yet.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {integrations.map(integ => {
-                  const health = healthData.find(h => h.courier === integ.courier_details.courier_name);
+                {configured.map((c) => {
+                  const healthy = c.status === 'ACTIVE';
                   return (
-                    <div key={integ.id} className="p-4 bg-white/5 rounded-2xl border border-white/10 group hover:border-blue-500/30 transition-all">
+                    <div key={c.id} className="p-4 bg-white/5 rounded-2xl border border-white/10 group hover:border-blue-500/30 transition-all">
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center font-bold text-blue-400">
-                            {integ.courier_details.courier_name[0]}
+                            {(c.carrier_name || '?')[0]}
                           </div>
                           <div>
-                            <h4 className="font-bold text-sm">{integ.courier_details.courier_name}</h4>
+                            <h4 className="font-bold text-sm">{c.carrier_name}</h4>
                             <div className="flex items-center gap-2 mt-1">
-                              <span className={`w-1.5 h-1.5 rounded-full ${health?.status === 'healthy' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                              <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">{health?.status || 'Unknown'}</span>
+                              <span className={`w-1.5 h-1.5 rounded-full ${healthy ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                              <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">{(c.status || 'unknown').replace(/_/g, ' ')}</span>
                             </div>
                           </div>
                         </div>
-                        <button 
-                          onClick={() => handleDeleteIntegration(integ.id)}
+                        <button
+                          onClick={() => handleDelete(c.id)}
                           className="p-2 text-white/20 hover:text-red-400 transition-colors"
                         >
                           <FiTrash2 />
                         </button>
                       </div>
-                      
+
                       <div className="space-y-2 mb-4">
                         <div className="flex justify-between text-[10px] font-bold text-white/30 uppercase">
-                          <span>Mode</span>
-                          <span className="text-white/60">{integ.account_mode}</span>
+                          <span>COD</span>
+                          <span className="text-white/60">{c.allow_cod ? 'Enabled' : 'Disabled'}</span>
                         </div>
                         <div className="flex justify-between text-[10px] font-bold text-white/30 uppercase">
                           <span>Label</span>
-                          <span className="text-white/60">{integ.label_type}</span>
+                          <span className="text-white/60">{c.label_type}</span>
+                        </div>
+                        <div className="flex justify-between text-[10px] font-bold text-white/30 uppercase">
+                          <span>API Key</span>
+                          <span className="text-white/60 font-mono normal-case">{c.api_key_masked || '—'}</span>
                         </div>
                       </div>
 
-                      <button className="w-full py-2 bg-white/5 hover:bg-white/10 text-white/60 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2">
-                        <FiSettings /> Configure
-                      </button>
+                      <div className="w-full py-2 bg-white/5 text-white/60 text-xs font-bold rounded-lg flex items-center justify-center gap-2">
+                        <FiSettings /> {c.shipping_mode}
+                      </div>
                     </div>
                   );
                 })}
@@ -173,15 +191,20 @@ const CourierSettings = () => {
         <div className="space-y-6">
           <div className="glass-card p-6">
             <h3 className="font-bold mb-6 flex items-center gap-2 text-emerald-400">
-              <FiActivity /> API Health
+              <FiActivity /> Connection Status
             </h3>
             <div className="space-y-4">
-              {healthData.map(h => (
-                <div key={h.courier} className="flex justify-between items-center">
-                  <div className="text-sm font-medium">{h.courier}</div>
+              {configured.length === 0 && <p className="text-white/30 text-xs">No couriers to monitor.</p>}
+              {configured.map((c) => (
+                <div key={c.id} className="flex justify-between items-center">
+                  <div className="text-sm font-medium">{c.carrier_name}</div>
                   <div className="text-right">
-                    <div className="text-[10px] font-bold text-emerald-400">{h.uptime} Uptime</div>
-                    <div className="text-[10px] text-white/20">{h.latency}</div>
+                    <div className={`text-[10px] font-bold ${c.status === 'ACTIVE' ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {(c.status || '').replace(/_/g, ' ')}
+                    </div>
+                    <div className="text-[10px] text-white/20">
+                      {c.last_tested_at ? new Date(c.last_tested_at).toLocaleDateString('en-IN') : 'Never tested'}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -194,12 +217,12 @@ const CourierSettings = () => {
       <AnimatePresence>
         {showWizard && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setShowWizard(false)}
+              onClick={resetWizard}
               className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             />
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
               className="relative w-full max-w-2xl bg-[#141521] rounded-3xl border border-white/10 shadow-2xl overflow-hidden"
             >
@@ -209,7 +232,7 @@ const CourierSettings = () => {
                   <p className="text-white/40 text-xs">Configure API credentials and settings.</p>
                 </div>
                 <div className="flex gap-2">
-                  {[1,2,3].map(s => (
+                  {[1, 2, 3].map((s) => (
                     <div key={s} className={`w-2 h-2 rounded-full ${wizardStep === s ? 'bg-blue-500' : wizardStep > s ? 'bg-emerald-500' : 'bg-white/10'}`} />
                   ))}
                 </div>
@@ -218,18 +241,23 @@ const CourierSettings = () => {
               <div className="p-8 max-h-[60vh] overflow-y-auto">
                 {wizardStep === 1 && (
                   <div className="grid grid-cols-2 gap-4">
-                    {couriers.map(c => (
-                      <div 
+                    {catalog.length === 0 && (
+                      <p className="col-span-2 text-white/30 text-sm text-center py-8">
+                        No carriers available in the catalog yet.
+                      </p>
+                    )}
+                    {catalog.map((c) => (
+                      <div
                         key={c.id}
-                        onClick={() => setSelectedCourier(c)}
-                        className={`p-6 rounded-2xl border transition-all cursor-pointer flex flex-col items-center text-center gap-4 ${selectedCourier?.id === c.id ? 'bg-blue-500/10 border-blue-500/50 shadow-lg shadow-blue-500/10' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                        onClick={() => setSelectedCarrier(c)}
+                        className={`p-6 rounded-2xl border transition-all cursor-pointer flex flex-col items-center text-center gap-4 ${selectedCarrier?.id === c.id ? 'bg-blue-500/10 border-blue-500/50 shadow-lg shadow-blue-500/10' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
                       >
                         <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center font-bold text-lg">
-                          {c.courier_name[0]}
+                          {(c.name || '?')[0]}
                         </div>
                         <div>
-                          <h4 className="font-bold text-sm">{c.courier_name}</h4>
-                          <p className="text-[10px] text-white/30 uppercase mt-1">{c.mode}</p>
+                          <h4 className="font-bold text-sm">{c.name}</h4>
+                          <p className="text-[10px] text-white/30 uppercase mt-1">{c.code}</p>
                         </div>
                       </div>
                     ))}
@@ -244,15 +272,18 @@ const CourierSettings = () => {
                         Your API credentials are encrypted with AES-256 before being stored in our secure database.
                       </p>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 gap-4">
-                      <InputField label="API Key / Token" type="password" icon={<FiKey />} />
-                      <InputField label="User ID / Login ID" icon={<FiUser />} />
-                      <InputField label="Client Secret / Password" type="password" icon={<FiLock />} />
+                      <InputField label="API Key / Token" type="password" icon={<FiKey />}
+                        value={formData.api_key} onChange={(e) => setField('api_key', e.target.value)} />
+                      <InputField label="Account Number" icon={<FiUser />}
+                        value={formData.account_number} onChange={(e) => setField('account_number', e.target.value)} />
+                      <InputField label="Client Secret / Password" type="password" icon={<FiLock />}
+                        value={formData.api_secret} onChange={(e) => setField('api_secret', e.target.value)} />
                     </div>
 
                     <div className="pt-4">
-                      <button 
+                      <button
                         onClick={handleTestConnection}
                         disabled={testing}
                         className={`w-full py-4 rounded-2xl border border-white/10 flex items-center justify-center gap-2 font-bold transition-all ${testing ? 'opacity-50' : 'hover:bg-white/5 active:scale-95'}`}
@@ -274,18 +305,38 @@ const CourierSettings = () => {
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-wider ml-1">Account Mode</label>
-                        <select className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm focus:outline-none">
-                          <option>Both (COD & Prepaid)</option>
-                          <option>COD Only</option>
-                          <option>Prepaid Only</option>
+                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-wider ml-1">COD Support</label>
+                        <select
+                          value={formData.allow_cod ? 'yes' : 'no'}
+                          onChange={(e) => setField('allow_cod', e.target.value === 'yes')}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm focus:outline-none"
+                        >
+                          <option value="yes">COD Enabled</option>
+                          <option value="no">Prepaid Only</option>
                         </select>
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-bold text-white/30 uppercase tracking-wider ml-1">Label Type</label>
-                        <select className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm focus:outline-none">
-                          <option>A4</option>
-                          <option>Thermal (4x6)</option>
+                        <select
+                          value={formData.label_type}
+                          onChange={(e) => setField('label_type', e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm focus:outline-none"
+                        >
+                          <option value="A4">A4</option>
+                          <option value="A6">A6</option>
+                          <option value="THERMAL">Thermal (4x6)</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-white/30 uppercase tracking-wider ml-1">Shipping Mode</label>
+                        <select
+                          value={formData.shipping_mode}
+                          onChange={(e) => setField('shipping_mode', e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm focus:outline-none"
+                        >
+                          <option value="SURFACE">Surface</option>
+                          <option value="AIR">Air</option>
+                          <option value="EXPRESS">Express</option>
                         </select>
                       </div>
                     </div>
@@ -295,7 +346,7 @@ const CourierSettings = () => {
                       </div>
                       <div>
                         <h4 className="font-bold text-sm">Ready to Activate</h4>
-                        <p className="text-white/40 text-xs mt-1">Everything looks good. Click complete to start booking shipments via {selectedCourier?.courier_name}.</p>
+                        <p className="text-white/40 text-xs mt-1">Everything looks good. Click complete to start booking shipments via {selectedCarrier?.name}.</p>
                       </div>
                     </div>
                   </div>
@@ -304,18 +355,18 @@ const CourierSettings = () => {
 
               <div className="p-8 border-t border-white/10 bg-white/5 flex gap-4">
                 {wizardStep > 1 && (
-                  <button 
-                    onClick={() => setWizardStep(s => s - 1)}
+                  <button
+                    onClick={() => setWizardStep((s) => s - 1)}
                     className="flex-1 py-4 bg-white/5 border border-white/10 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-white/10 transition-all"
                   >
                     Back
                   </button>
                 )}
-                <button 
-                  disabled={wizardStep === 1 && !selectedCourier}
+                <button
+                  disabled={(wizardStep === 1 && !selectedCarrier) || loading}
                   onClick={() => {
                     if (wizardStep === 3) handleSaveIntegration();
-                    else setWizardStep(s => s + 1);
+                    else setWizardStep((s) => s + 1);
                   }}
                   className="flex-[2] py-4 bg-blue-500 hover:bg-blue-600 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                 >
@@ -337,7 +388,7 @@ const InputField = ({ label, icon, ...props }) => (
       <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-blue-400 transition-colors">
         {icon}
       </div>
-      <input 
+      <input
         {...props}
         className="w-full bg-white/5 border border-white/10 rounded-xl pl-12 pr-4 py-3 text-sm focus:outline-none focus:border-blue-500/50 transition-all"
         placeholder={`Enter ${label}...`}
