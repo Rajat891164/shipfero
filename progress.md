@@ -22,16 +22,22 @@ Frontend moved into monorepo at `frontend/` (was `D:\My files\ship\Admin_UI`). C
 | Track | ✅ wired & live-verified (2026-07-15: searched a real AWB, full timeline + NDR-derived status rendered from live DB) |
 | Onboarding | ✅ **fixed & live-verified** (2026-07-15) — rewired to `AuthService`/`MerchantService`; signup→login→session flow confirmed against live backend (`f16a09b`) |
 | CourierSettings | ✅ **fixed & live-verified** (2026-07-15) — rewired to `CarrierService`/`CourierService`; add→test→list-refresh confirmed live, encrypted API key correctly masked (`f16a09b`) |
-| OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics | ⬜ still mock data |
+| OrderDetail | ✅ wired & live-verified (2026-07-15: real order detail, status tracker, tracking_id AWB fallback) (`dc071ee`) |
+| Returns | ✅ wired & live-verified (2026-07-15: real return list w/ tab filters) (`dc071ee`) |
+| Pricing | ✅ wired & live-verified (2026-07-15: rate estimator via /compare returned 3 couriers; rate-card table empty as pricing.RateCard table is unseeded) (`dc071ee`) |
+| Reports | ✅ wired & live-verified (2026-07-15: generate→201, recent list refreshed) (`8ee03d0`) |
+| Settings | ✅ wired & live-verified (2026-07-15: profile PATCH persisted across reload, API-key create→201 one-time key shown, revoke→204; KYC/Bank read-only tabs render real state) (`8ee03d0`) |
+| Integrations | ✅ wired & live-verified (2026-07-15: list real Shopify, sync→200 "5 orders", connect modal create→201 + URL-validation error surfaced) (`8ee03d0`) |
+| Logistics | ✅ wired & live-verified (2026-07-15: real carrier catalog, serviceability→200) (`8ee03d0`) |
 | AddOns | ⬜ mock (no backend — lowest priority) |
 
-**Tally:** 8 wired · 0 broken · 7 pending.
+**Tally:** 15 wired & live-verified · 0 broken · 1 pending (AddOns — deferred, no backend).
 
 **Next (frontend):**
-1. Wire remaining mock pages: OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics.
+1. AddOns page — deferred until the `addons` backend module exists (PRD marks it low priority).
 2. Phase 3 backend: Celery + S3, then Add-ons/Gen AI.
 
-**Frontend commits so far:** `f0b4a7d` (monorepo move), `4838814` (CORS), `1b4627c` (api.js + Login), `06a177d` (Dashboard + sidebar), `c381577` (Orders), `069537f` (Wallet), NDR, `2309581` (Track), `f16a09b` (Onboarding + CourierSettings fix).
+**Frontend commits so far:** `f0b4a7d` (monorepo move), `4838814` (CORS), `1b4627c` (api.js + Login), `06a177d` (Dashboard + sidebar), `c381577` (Orders), `069537f` (Wallet), NDR, `2309581` (Track), `f16a09b` (Onboarding + CourierSettings fix), `dc071ee` (OrderDetail + Returns + Pricing), `8ee03d0` (Reports + Settings + Integrations + Logistics), `8a20827` (shipfero_db seed dump).
 
 **Local dev environment note (2026-07-15):** machine changed from `kajal.dawas` user / `D:\My files\shipfero` path to `dishu` user / `C:\Users\dishu\kajal\shipfero`. Fixed: `backend/venv/pyvenv.cfg` repointed to the current Python install (venv is gitignored, packages were intact, just the interpreter path was stale). The Postgres `shipfero_db` database didn't exist on this machine's server yet — restored from the `shipfero_db` pg_dump file at repo root via `pg_restore` against PostgreSQL 15 (the instance listening on port 5432; this machine also has PG 14 on 5433 and PG 18 on 5434 installed side by side).
 
@@ -114,21 +120,21 @@ Signup → JWT login → email OTP verify (Module 1)
 |---|--------|-----|------|----------|-----------|----------------|
 | 1 | Onboarding | accounts+merchants | ✅ | ✅ | ✅ | ✅ |
 | 2 | Courier Integration | couriers | ✅ | ✅ | ✅ | ✅ |
-| 3 | Channel Integration | integrations | ✅ | ✅ | ✅ | 🔴 |
+| 3 | Channel Integration | integrations | ✅ | ✅ | ✅ | ✅ |
 | 4 | Dashboard | merchants (new endpoint) | ✅ | — | ✅ | ✅ |
-| 5 | Orders | orders | ✅ | ✅ | ✅ | ✅ (list only — OrderDetail still 🔴) |
+| 5 | Orders | orders | ✅ | ✅ | ✅ | ✅ (list + OrderDetail) |
 | 6 | Track | tracking | ✅ | ✅ | ✅ | ✅ |
 | 7 | NDR | ndr | ✅ | ✅ | ✅ | ✅ |
-| 8 | Returns | returns | ✅ | ✅ | ✅ | 🔴 |
-| 9 | Logistics | carriers + admin_panel | ✅ | ✅ | ✅ | 🔴 |
+| 8 | Returns | returns | ✅ | ✅ | ✅ | ✅ |
+| 9 | Logistics | carriers + admin_panel | ✅ | ✅ | ✅ | ✅ |
 | 10 | Wallet | billing | ✅ | ✅ | ✅ | ✅ |
-| 11 | Pricing | pricing | ✅ | ✅ | ✅ | 🔴 |
+| 11 | Pricing | pricing | ✅ | ✅ | ✅ | ✅ |
 | 12 | Add-ons | addons | ⬜ not started | ⬜ | ⬜ | 🟡 page hai |
-| 13 | Reports | reports | ✅ (sync stub) | ✅ | ✅ | 🔴 |
-| 14 | Settings | accounts | ✅ | ✅ | ✅ | 🔴 |
+| 13 | Reports | reports | ✅ (sync stub) | ✅ | ✅ | ✅ |
+| 14 | Settings | accounts | ✅ | ✅ | ✅ | ✅ |
 | 15 | Gen AI | FastAPI (future) | ⬜ | ⬜ | ⬜ | ⬜ |
 
-Every module 1–11, 13, 14: backend done. **Frontend integration (Phase 2) is now the sole remaining gap for the core product** — 8/16 pages wired, 7 pending (OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics), AddOns deferred (no backend).
+Every module 1–11, 13, 14: backend done. **Phase 2 frontend integration is essentially complete** — 15/16 pages wired & live-verified against the real backend; only AddOns remains (deferred, its `addons` backend module isn't built). Phase 3 (Celery + S3, then Add-ons/Gen AI) is the next real gap.
 
 ---
 
