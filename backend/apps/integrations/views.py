@@ -5,12 +5,99 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from core.utils import get_merchant
-from .models import ChannelIntegration, IntegrationSyncLog
+from .models import (
+    ChannelIntegration,
+    IntegrationSyncLog,
+    ChannelPaymentMapping,
+    resolve_payment_type,
+)
 from .serializers import (
     ChannelIntegrationSerializer,
     ChannelIntegrationCreateSerializer,
     IntegrationSyncLogSerializer,
+    ChannelPaymentMappingSerializer,
 )
+
+
+def _apply_mappings_to_orders(integration):
+    """Re-resolve every flagged (unmapped) order on an integration against the
+    current mappings; returns how many became mapped."""
+    updated = 0
+    for order in integration.orders.filter(is_payment_mapped=False):
+        resolved = resolve_payment_type(integration, order.store_payment_method)
+        if resolved:
+            order.payment_type = resolved
+            order.is_payment_mapped = True
+            order.is_flagged = False
+            order.flag_reason = None
+            order.save(update_fields=[
+                "payment_type", "is_payment_mapped", "is_flagged", "flag_reason",
+            ])
+            updated += 1
+    return updated
+
+
+class PaymentMappingListCreateView(generics.ListCreateAPIView):
+    """GET/POST /api/integrations/<pk>/payment-mappings/"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ChannelPaymentMappingSerializer
+
+    def _integration(self):
+        return generics.get_object_or_404(
+            ChannelIntegration, pk=self.kwargs["pk"], merchant=get_merchant(self.request)
+        )
+
+    def get_queryset(self):
+        return ChannelPaymentMapping.objects.filter(integration=self._integration())
+
+    def perform_create(self, serializer):
+        integration = self._integration()
+        serializer.save(integration=integration)
+        _apply_mappings_to_orders(integration)
+
+
+class PaymentMappingDeleteView(generics.DestroyAPIView):
+    """DELETE /api/integrations/<pk>/payment-mappings/<mapping_pk>/"""
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return ChannelPaymentMapping.objects.filter(
+            integration__pk=self.kwargs["pk"],
+            integration__merchant=get_merchant(self.request),
+        )
+
+    lookup_url_kwarg = "mapping_pk"
+
+
+class BulkPrepaidMappingView(APIView):
+    """POST /api/integrations/<pk>/payment-mappings/bulk-prepaid/
+    Map every still-unmapped store method (from flagged orders) as PREPAID."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        integration = generics.get_object_or_404(
+            ChannelIntegration, pk=pk, merchant=get_merchant(request)
+        )
+        methods = set(
+            integration.orders.filter(is_payment_mapped=False)
+            .exclude(store_payment_method__isnull=True)
+            .exclude(store_payment_method="")
+            .values_list("store_payment_method", flat=True)
+        )
+        created = 0
+        for method in methods:
+            _, was_created = ChannelPaymentMapping.objects.get_or_create(
+                integration=integration,
+                store_method_name=method,
+                defaults={"mapped_type": ChannelPaymentMapping.MappedType.PREPAID},
+            )
+            created += was_created
+        remapped = _apply_mappings_to_orders(integration)
+        return Response({
+            "detail": f"{created} method(s) mapped as Prepaid, {remapped} order(s) unflagged.",
+            "mappings_created": created,
+            "orders_remapped": remapped,
+        })
 
 
 class IntegrationListCreateView(generics.ListCreateAPIView):

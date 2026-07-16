@@ -55,6 +55,40 @@ class ChannelIntegration(TimeStampedModel):
         unique_together = [("merchant", "platform", "store_url")]
 
 
+class ChannelPaymentMapping(TimeStampedModel):
+    """Maps a store's raw payment-method name → COD / Prepaid (PRD Module 3, Step 5).
+
+    Orders arriving with an unmapped method are flagged and blocked from
+    processing until a mapping exists.
+    """
+
+    class MappedType(models.TextChoices):
+        COD = "COD", "Cash on Delivery"
+        PREPAID = "PREPAID", "Prepaid"
+
+    integration = models.ForeignKey(
+        ChannelIntegration, on_delete=models.CASCADE, related_name="payment_mappings"
+    )
+    store_method_name = models.CharField(max_length=100)
+    mapped_type = models.CharField(max_length=10, choices=MappedType.choices)
+
+    class Meta:
+        unique_together = [("integration", "store_method_name")]
+
+    def __str__(self):
+        return f"{self.integration_id}: {self.store_method_name} → {self.mapped_type}"
+
+
+def resolve_payment_type(integration, store_method_name):
+    """Return the mapped COD/PREPAID for a raw method name, or None if unmapped."""
+    if not store_method_name:
+        return None
+    mapping = ChannelPaymentMapping.objects.filter(
+        integration=integration, store_method_name__iexact=store_method_name.strip()
+    ).first()
+    return mapping.mapped_type if mapping else None
+
+
 class IntegrationSyncLog(TimeStampedModel):
     """Log of order sync events from channels."""
     

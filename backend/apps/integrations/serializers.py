@@ -1,9 +1,16 @@
 from rest_framework import serializers
 from core.encryption import encrypt_value, decrypt_value, mask_value
 from core.utils import get_merchant
-from .models import ChannelIntegration, IntegrationSyncLog
+from .models import ChannelIntegration, IntegrationSyncLog, ChannelPaymentMapping
 
 CREDENTIAL_FIELDS = ["api_key", "api_secret", "access_token"]
+
+
+class ChannelPaymentMappingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChannelPaymentMapping
+        fields = ["id", "store_method_name", "mapped_type", "created_at"]
+        read_only_fields = ["id", "created_at"]
 
 
 class ChannelIntegrationSerializer(serializers.ModelSerializer):

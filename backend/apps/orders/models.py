@@ -117,6 +117,7 @@ class Order(TimeStampedModel):
     flag_reason = models.CharField(max_length=255, null=True, blank=True)
 
     # Source metadata
+    store_payment_method = models.CharField(max_length=100, null=True, blank=True)
     channel_raw_data = models.JSONField(null=True, blank=True)
 
     # Integration reference

@@ -91,6 +91,7 @@ class OrderDetailSerializer(serializers.ModelSerializer):
             "shipment", "awb_number", "tracking_id", "shipment_status",
             # Status
             "status", "has_missing_weight", "is_flagged", "flag_reason",
+            "is_payment_mapped", "store_payment_method",
             # Nested
             "items", "status_history",
             "created_at", "updated_at",
@@ -122,8 +123,17 @@ class CreateOrderSerializer(serializers.ModelSerializer):
             "shipping_charge_merchant", "payment_type", "cod_amount",
             "total_weight", "length", "breadth", "height",
             "pickup_location", "assigned_carrier",
+            "integration", "store_payment_method",
             "items",
         ]
+
+    def validate_integration(self, value):
+        if value is None:
+            return value
+        merchant = get_merchant(self.context["request"])
+        if value.merchant_id != merchant.id:
+            raise serializers.ValidationError("Integration not found.")
+        return value
 
     def validate(self, attrs):
         payment_type = attrs.get("payment_type")
@@ -142,6 +152,26 @@ class CreateOrderSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop("items", [])
         merchant = get_merchant(self.context["request"])
         order = Order.objects.create(merchant=merchant, **validated_data)
+
+        # PRD Module 3: if the order came from a channel with a raw payment
+        # method name, resolve it via that channel's payment mappings. Unmapped
+        # → flag the order and block processing until a mapping is created.
+        integration = validated_data.get("integration")
+        store_method = validated_data.get("store_payment_method")
+        if integration and store_method:
+            from apps.integrations.models import resolve_payment_type
+            resolved = resolve_payment_type(integration, store_method)
+            if resolved is None:
+                order.is_payment_mapped = False
+                order.is_flagged = True
+                order.flag_reason = f"Unmapped payment method: {store_method}"
+                order.save(update_fields=[
+                    "is_payment_mapped", "is_flagged", "flag_reason",
+                ])
+            elif resolved != order.payment_type:
+                order.payment_type = resolved
+                order.save(update_fields=["payment_type"])
+
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)
         # Auto-compute total weight from items if not provided
