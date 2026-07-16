@@ -126,6 +126,7 @@ export const AuthService = {
   login: (email, password) => api.post('/auth/token/', { email, password }),
   refresh: (refresh) => api.post('/auth/token/refresh/', { refresh }),
   signup: (data) => api.post('/auth/signup/', data),
+  checkEmail: (email) => api.get('/auth/check-email/', { params: { email } }),
   sendEmailOtp: () => api.post('/auth/send-email-otp/'),
   verifyEmailOtp: (code) => api.post('/auth/verify-email-otp/', { code }),
 };

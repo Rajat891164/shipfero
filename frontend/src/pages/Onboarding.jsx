@@ -33,9 +33,34 @@ const Onboarding = () => {
   const navigate = useNavigate();
   const setSession = useAuthStore((state) => state.setSession);
 
+  const [emailStatus, setEmailStatus] = useState('idle'); // idle | checking | available | taken
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+    if (name === 'email') setEmailStatus('idle');
+  };
+
+  // PRD Module 1, Step 1 validations
+  const GST_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  const gstValid = !formData.gst_number || GST_RE.test(formData.gst_number.toUpperCase());
+  const pwChecks = {
+    length: formData.password.length >= 8,
+    upper: /[A-Z]/.test(formData.password),
+    number: /[0-9]/.test(formData.password),
+  };
+  const pwScore = Object.values(pwChecks).filter(Boolean).length;
+
+  const checkEmailAvailability = async () => {
+    const email = formData.email.trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+    setEmailStatus('checking');
+    try {
+      const { data } = await AuthService.checkEmail(email);
+      setEmailStatus(data.available ? 'available' : 'taken');
+    } catch {
+      setEmailStatus('idle');
+    }
   };
 
   const nextStep = () => setStep(prev => prev + 1);
@@ -52,6 +77,10 @@ const Onboarding = () => {
     setError(null);
     try {
       if (step === 1) {
+        // PRD validations before creating the account.
+        if (!gstValid) throw { response: { data: { detail: 'GST number must be a valid 15-character GSTIN.' } } };
+        if (pwScore < 3) throw { response: { data: { detail: 'Password needs at least 8 characters, one uppercase letter and one number.' } } };
+        if (emailStatus === 'taken') throw { response: { data: { detail: 'This email is already registered.' } } };
         // Register, then log in so the OTP/onboarding calls are authenticated.
         const [firstName, ...rest] = formData.full_name.trim().split(' ');
         await AuthService.signup({
@@ -200,12 +229,34 @@ const Onboarding = () => {
                 {step === 1 && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <InputField label="Full Name" name="full_name" value={formData.full_name} onChange={handleInputChange} placeholder="John Doe" />
-                    <InputField label="Email" name="email" type="email" value={formData.email} onChange={handleInputChange} placeholder="john@company.com" />
+                    <div>
+                      <InputField label="Email" name="email" type="email" value={formData.email} onChange={handleInputChange} onBlur={checkEmailAvailability} placeholder="john@company.com" />
+                      {emailStatus === 'checking' && <p className="text-[11px] text-white/40 mt-1">Checking availability…</p>}
+                      {emailStatus === 'available' && <p className="text-[11px] text-emerald-400 mt-1">✓ Email is available</p>}
+                      {emailStatus === 'taken' && <p className="text-[11px] text-red-400 mt-1">✕ Email is already registered</p>}
+                    </div>
                     <InputField label="Phone" name="phone" value={formData.phone} onChange={handleInputChange} placeholder="+91 9876543210" />
                     <InputField label="Company Name" name="company_name" value={formData.company_name} onChange={handleInputChange} placeholder="Acme Corp" />
-                    <InputField label="GST Number" name="gst_number" value={formData.gst_number} onChange={handleInputChange} placeholder="Optional" />
+                    <div>
+                      <InputField label="GST Number" name="gst_number" value={formData.gst_number} onChange={handleInputChange} placeholder="Optional (15-char GSTIN)" />
+                      {!gstValid && <p className="text-[11px] text-red-400 mt-1">Invalid GSTIN format</p>}
+                    </div>
                     <InputField label="PAN Number" name="pan_number" value={formData.pan_number} onChange={handleInputChange} placeholder="ABCDE1234F" />
-                    <InputField label="Password" name="password" type="password" value={formData.password} onChange={handleInputChange} placeholder="••••••••" />
+                    <div>
+                      <InputField label="Password" name="password" type="password" value={formData.password} onChange={handleInputChange} placeholder="••••••••" />
+                      {formData.password && (
+                        <div className="mt-1.5">
+                          <div className="flex gap-1">
+                            {[0, 1, 2].map((i) => (
+                              <div key={i} className={`h-1 flex-1 rounded-full ${i < pwScore ? (pwScore === 3 ? 'bg-emerald-400' : 'bg-yellow-400') : 'bg-white/10'}`} />
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-white/40 mt-1">
+                            {pwChecks.length ? '✓' : '•'} 8+ chars &nbsp; {pwChecks.upper ? '✓' : '•'} uppercase &nbsp; {pwChecks.number ? '✓' : '•'} number
+                          </p>
+                        </div>
+                      )}
+                    </div>
                     <InputField label="Referral Code" name="referral_code" value={formData.referral_code} onChange={handleInputChange} placeholder="Optional" />
                   </div>
                 )}

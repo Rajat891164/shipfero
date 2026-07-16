@@ -18,6 +18,21 @@ class SignupView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
 
+class CheckEmailView(APIView):
+    """GET /api/auth/check-email/?email=… — real-time email uniqueness check
+    for the signup form (PRD Module 1, Step 1)."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.contrib.auth import get_user_model
+        email = (request.query_params.get("email") or "").strip().lower()
+        if not email:
+            return Response({"detail": "email query param required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        taken = get_user_model().objects.filter(email__iexact=email).exists()
+        return Response({"email": email, "available": not taken})
+
+
 
 class SendEmailOTPView(APIView):
     permission_classes = [IsAuthenticated]
