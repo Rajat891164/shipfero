@@ -135,6 +135,7 @@ export const MerchantService = {
   me: () => api.get('/merchants/me/'),
   updateMe: (data) => api.patch('/merchants/me/', data),
   dashboard: () => api.get('/merchants/dashboard/'),
+  dashboardAnalytics: () => api.get('/merchants/dashboard/analytics/'),
   onboardingStatus: () => api.get('/merchants/onboarding/status/'),
   getBusinessProfile: () => api.get('/merchants/onboarding/business-profile/'),
   saveBusinessProfile: (data) => api.post('/merchants/onboarding/business-profile/', data),

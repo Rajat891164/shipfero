@@ -1,6 +1,7 @@
 from decimal import Decimal
 
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.views import APIView
@@ -8,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from core.utils import get_merchant
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderItem
 from apps.ndr.models import NDR
 from .models import Merchant, MerchantBankDetails, PickupLocation
 from .serializers import (
@@ -332,4 +333,95 @@ class DashboardView(APIView):
             "shipment_status_breakdown": status_breakdown,
             "pending_actions": pending_actions,
             "ndr_pending_count": ndr_pending_qs.count(),
+        })
+
+
+class DashboardAnalyticsView(APIView):
+    """
+    GET /api/merchants/dashboard/analytics/ — PRD Module 4 Business Summary
+    Charts + Top-10 views, aggregated over the merchant's orders.
+    """
+    permission_classes = [IsAuthenticated]
+
+    DELIVERED = Order.OrderStatus.DELIVERED
+    RTO_STATUSES = [Order.OrderStatus.RTO_INITIATED, Order.OrderStatus.RTO_DELIVERED]
+    BOOKED_STATUSES = [
+        Order.OrderStatus.BOOKED, Order.OrderStatus.IN_TRANSIT,
+        Order.OrderStatus.OUT_FOR_DELIVERY, Order.OrderStatus.DELIVERED,
+    ]
+
+    def get(self, request):
+        merchant = get_merchant(request)
+        orders = Order.objects.filter(merchant=merchant)
+
+        # 30-day daily shipment trend
+        since = timezone.now().date() - timezone.timedelta(days=29)
+        trend_rows = (
+            orders.filter(created_at__date__gte=since)
+            .annotate(day=TruncDate("created_at"))
+            .values("day").annotate(count=Count("id")).order_by("day")
+        )
+        daily_trend = [
+            {"date": r["day"].isoformat(), "count": r["count"]} for r in trend_rows
+        ]
+
+        # Delivery % vs RTO %
+        delivered = orders.filter(status=self.DELIVERED).count()
+        rto = orders.filter(status__in=self.RTO_STATUSES).count()
+
+        # Courier-wise split (booked / delivered / rto)
+        courier_split = [
+            {"carrier": r["assigned_carrier__name"], "booked": r["booked"],
+             "delivered": r["delivered"], "rto": r["rto"]}
+            for r in orders.exclude(assigned_carrier__isnull=True)
+            .values("assigned_carrier__name")
+            .annotate(
+                booked=Count("id", filter=Q(status__in=self.BOOKED_STATUSES)),
+                delivered=Count("id", filter=Q(status=self.DELIVERED)),
+                rto=Count("id", filter=Q(status__in=self.RTO_STATUSES)),
+            ).order_by("-booked")
+        ]
+
+        # Channel-wise order volume
+        channel_volume = [
+            {"channel": r["channel_source"], "count": r["count"]}
+            for r in orders.values("channel_source").annotate(count=Count("id")).order_by("-count")
+        ]
+
+        # Top 10 cities by order volume
+        top_cities = [
+            {"city": r["shipping_city"], "count": r["count"]}
+            for r in orders.exclude(shipping_city="")
+            .values("shipping_city").annotate(count=Count("id")).order_by("-count")[:10]
+        ]
+
+        # Top 10 products by SKU frequency
+        top_products = [
+            {"product": r["product_name"], "sku": r["sku"], "count": r["qty"]}
+            for r in OrderItem.objects.filter(order__merchant=merchant)
+            .values("product_name", "sku")
+            .annotate(qty=Sum("quantity")).order_by("-qty")[:10]
+        ]
+
+        # Top 10 pincodes by delivery success rate
+        top_pincodes = [
+            {"pincode": r["shipping_pincode"], "total": r["total"],
+             "delivered": r["delivered"],
+             "success_rate": round(100 * r["delivered"] / r["total"], 1) if r["total"] else 0}
+            for r in orders.exclude(shipping_pincode="")
+            .values("shipping_pincode")
+            .annotate(
+                total=Count("id"),
+                delivered=Count("id", filter=Q(status=self.DELIVERED)),
+            ).order_by("-delivered")[:10]
+        ]
+
+        return Response({
+            "daily_shipment_trend": daily_trend,
+            "delivery_vs_rto": {"delivered": delivered, "rto": rto},
+            "courier_split": courier_split,
+            "channel_volume": channel_volume,
+            "top_cities": top_cities,
+            "top_products": top_products,
+            "top_pincodes": top_pincodes,
         })

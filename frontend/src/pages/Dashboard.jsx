@@ -29,29 +29,7 @@ import {
   Pie
 } from 'recharts';
 
-const data = [
-  { name: 'Mon', shipments: 45, revenue: 12400 },
-  { name: 'Tue', shipments: 52, revenue: 15600 },
-  { name: 'Wed', shipments: 61, revenue: 18900 },
-  { name: 'Thu', shipments: 48, revenue: 14200 },
-  { name: 'Fri', shipments: 70, revenue: 21000 },
-  { name: 'Sat', shipments: 55, revenue: 16500 },
-  { name: 'Sun', shipments: 40, revenue: 11000 },
-];
-
-const pieData = [
-  { name: 'Delhivery',     value: 400, color: '#00f2fe' },
-  { name: 'BlueDart',      value: 300, color: '#7000ff' },
-  { name: 'Ecom Express',  value: 200, color: '#ff007a' },
-  { name: 'XpressBees',    value: 100, color: '#00ffa3' },
-];
-
-const couriersTable = [
-  { name: 'Delhivery',    booked: 145, inTransit: 82, delivered: 58, rto: 5,  rate: '94%' },
-  { name: 'BlueDart',     booked: 98,  inTransit: 45, delivered: 42, rto: 2,  rate: '97%' },
-  { name: 'Ecom Express', booked: 112, inTransit: 68, delivered: 35, rto: 9,  rate: '89%' },
-  { name: 'XpressBees',   booked: 75,  inTransit: 38, delivered: 30, rto: 7,  rate: '88%' },
-];
+const SPLIT_COLORS = ['#00f2fe', '#7000ff', '#ff007a', '#00ffa3', '#fbbf24'];
 
 const StatCard = ({ icon: Icon, label, value, subtext, trend, gradient, onClick }) => (
   <div
@@ -101,12 +79,15 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const [dash, setDash] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
-    MerchantService.dashboard()
-      .then(({ data }) => active && setDash(data))
+    Promise.all([
+      MerchantService.dashboard().then(({ data }) => active && setDash(data)),
+      MerchantService.dashboardAnalytics().then(({ data }) => active && setAnalytics(data)).catch(() => {}),
+    ])
       .catch(() => active && setDash(null))
       .finally(() => active && setLoading(false));
     return () => {
@@ -117,6 +98,24 @@ const Dashboard = () => {
   const overview = dash?.overview || {};
   const pendingActions = dash?.pending_actions || [];
   const firstName = (user?.company_name || 'there').split(' ')[0];
+
+  // Real chart data (PRD Module 4 Business Summary Charts), from /dashboard/analytics/.
+  const trendData = (analytics?.daily_shipment_trend || []).map((d) => ({
+    name: new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+    shipments: d.count,
+  }));
+  const courierSplit = analytics?.courier_split || [];
+  const pieData = courierSplit.map((c, i) => ({
+    name: c.carrier,
+    value: c.booked,
+    color: SPLIT_COLORS[i % SPLIT_COLORS.length],
+  }));
+  const pieTotal = pieData.reduce((s, p) => s + p.value, 0) || 1;
+  const couriersTable = courierSplit.map((c) => {
+    const inTransit = Math.max(c.booked - c.delivered - c.rto, 0);
+    const rate = c.booked ? `${Math.round((c.delivered / c.booked) * 100)}%` : '—';
+    return { name: c.carrier, booked: c.booked, inTransit, delivered: c.delivered, rto: c.rto, rate };
+  });
 
   return (
     <div className="space-y-7 animate-fade-up">
@@ -196,7 +195,7 @@ const Dashboard = () => {
           </div>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={trendData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorShip" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor="#00f2fe" stopOpacity={0.25} />
@@ -245,7 +244,7 @@ const Dashboard = () => {
                   <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
                   <span className="text-xs font-medium text-muted group-hover:text-main transition-colors">{item.name}</span>
                 </div>
-                <span className="text-xs font-bold text-main">{Math.round(item.value / 10)}%</span>
+                <span className="text-xs font-bold text-main">{Math.round((item.value / pieTotal) * 100)}%</span>
               </div>
             ))}
           </div>

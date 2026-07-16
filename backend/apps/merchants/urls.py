@@ -13,12 +13,14 @@ from .views import (
     CompleteOnboardingView,
     MerchantPlanView,
     DashboardView,
+    DashboardAnalyticsView,
 )
 
 urlpatterns = [
     # Merchant profile (basic info)
     path("me/", MerchantProfileView.as_view(), name="merchant-me"),
     path("dashboard/", DashboardView.as_view(), name="merchant-dashboard"),
+    path("dashboard/analytics/", DashboardAnalyticsView.as_view(), name="merchant-dashboard-analytics"),
 
     # Onboarding
     path("onboarding/status/", OnboardingStatusView.as_view(), name="onboarding-status"),
