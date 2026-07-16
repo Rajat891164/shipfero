@@ -33,10 +33,18 @@ class ServiceabilityCheckView(APIView):
     """
     POST /api/carriers/serviceability/
     Check which carriers can service a given route and return rates.
+
+    Rates come from the single shared engine in `pricing.services` (the same
+    one the Pricing rate-comparison uses), so serviceability and rate
+    comparison never diverge. Pincode-level allow/deny lists
+    (`ServiceablePincode`) are honoured as a filter *only when data exists*;
+    with no pincode dataset loaded, every rate-carded carrier is serviceable.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from apps.pricing.services import quote_all_carriers
+
         serializer = ServiceabilityCheckSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
@@ -46,68 +54,38 @@ class ServiceabilityCheckView(APIView):
         weight = data["weight"]
         cod_required = data["cod"]
 
-        # Find carriers that service both pincodes
-        pickup_carriers = ServiceablePincode.objects.filter(
-            pincode=pickup_pincode, is_pickup_available=True
-        ).values_list("carrier_id", flat=True)
-
-        delivery_qs = ServiceablePincode.objects.filter(
-            pincode=delivery_pincode,
+        quotes = quote_all_carriers(
+            pickup_pincode, delivery_pincode, weight, is_cod=cod_required,
         )
-        if cod_required:
-            delivery_qs = delivery_qs.filter(is_cod_available=True)
 
-        delivery_carriers = delivery_qs.values_list("carrier_id", flat=True)
+        # Optional pincode-level filter: only apply if serviceability data
+        # for the delivery pincode has actually been loaded.
+        pincode_rows = ServiceablePincode.objects.filter(pincode=delivery_pincode)
+        if pincode_rows.exists():
+            allowed = set(
+                pincode_rows.filter(
+                    **({"is_cod_available": True} if cod_required else {})
+                ).values_list("carrier_id", flat=True)
+            )
+            quotes = [q for q in quotes if q["carrier"].id in allowed]
 
-        available_carrier_ids = set(pickup_carriers) & set(delivery_carriers)
-
-        if not available_carrier_ids:
+        if not quotes:
             return Response(
                 {"detail": "No carriers available for this route.", "results": []},
                 status=status.HTTP_200_OK,
             )
 
-        # Get carrier rates for the available carriers
-        carriers = Carrier.objects.filter(
-            id__in=available_carrier_ids, status=Carrier.Status.ACTIVE
-        )
-
-        results = []
-        for carrier in carriers:
-            rates = CarrierRate.objects.filter(
-                carrier=carrier, is_active=True,
-                min_weight_kg__lte=weight,
-                max_weight_kg__gte=weight,
-            )
-            if not rates.exists():
-                # Use a default rate estimate
-                rates = CarrierRate.objects.filter(carrier=carrier, is_active=True).order_by("min_weight_kg")
-                if not rates.exists():
-                    continue
-
-            for rate in rates:
-                estimated_rate = rate.base_rate + (rate.rate_per_kg * weight)
-                cod_charge = 0
-                if cod_required:
-                    cod_charge = max(
-                        rate.cod_charge,
-                        rate.cod_percentage * data.get("declared_value", 0) / 100
-                    )
-
-                results.append({
-                    "carrier_id": carrier.id,
-                    "carrier_name": carrier.name,
-                    "carrier_code": carrier.code,
-                    "logo_url": carrier.logo_url,
-                    "service_type": rate.service_type,
-                    "estimated_rate": round(estimated_rate, 2),
-                    "cod_charge": round(cod_charge, 2),
-                    "supports_cod": carrier.supports_cod,
-                    "estimated_days": _get_estimated_days(rate.service_type),
-                })
-
-        # Sort by estimated rate
-        results.sort(key=lambda x: x["estimated_rate"])
+        results = [{
+            "carrier_id": q["carrier"].id,
+            "carrier_name": q["carrier"].name,
+            "carrier_code": q["carrier"].code,
+            "logo_url": q["carrier"].logo_url,
+            "service_type": q["service_type"],
+            "estimated_rate": q["forward"] + q["fuel"],
+            "cod_charge": q["cod"],
+            "supports_cod": q["carrier"].supports_cod,
+            "estimated_days": f"{q['edd_days']} days",
+        } for q in quotes]
 
         return Response({
             "pickup_pincode": pickup_pincode,
