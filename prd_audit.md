@@ -22,7 +22,7 @@ but it means "conformance" here = the **feature/data-model** gaps below, not the
 
 | # | Module | Gap (PRD ref) | Status |
 |---|--------|---------------|--------|
-| A1 | 11 Pricing | `pricing.CompareRatesView` returns **hardcoded** 3 couriers regardless of input; PRD wants real calc (base + per-kg + COD + fuel) from rate cards. Also `estimated_charge` is a float, not decimal-string. | ⬜ |
+| A1 | 11 Pricing | `pricing.CompareRatesView` returns **hardcoded** 3 couriers regardless of input; PRD wants real calc (base + per-kg + COD + fuel) from rate cards. | ✅ 2026-07-16 — now computes from `pricing.RateCard`: deterministic pincode→zone, weight-slab pick + ADDITIONAL increments, fuel %, COD `max(min, pct×amt)`. Verified curl + browser (₹203.55–₹224.25 for 560001→110001 1.5kg, was hardcoded ₹58–₹120). Breakdown fields added. |
 | A2 | 9 Logistics | Serviceability computes from `carriers.CarrierRate` + `ServiceablePincode`, both **empty** → always "no carriers". Reconcile the two rate systems (`carriers.CarrierRate` vs `pricing.RateCard`) and seed serviceable pincodes so the tool returns real results. | ⬜ |
 | A3 | 3 Channel | **Payment Method Mapping** not built (no model). PRD: unmapped store payment method → order flagged + processing blocked. Add `ChannelPaymentMapping` model + CRUD + order-processing guard. | ⬜ |
 | A4 | 3 Channel | **Status Pushback Config** not built (config models only; the actual push to the store is Tier C/vendor). Add `ChannelStatusMapping` model + CRUD + per-mapping toggle. | ⬜ |
@@ -54,3 +54,4 @@ but it means "conformance" here = the **feature/data-model** gaps below, not the
 
 ## 📓 Iteration log
 - **2026-07-16** — Backlog created (iteration 0). Full PRD read (modules 1–14), cross-checked vs code. Found the dual rate-system inconsistency (A1/A2) as the headline gap.
+- **2026-07-16** — **A1 done.** Rewrote `pricing.CompareRatesView` to compute real rates from rate cards (zone derivation + slab + fuel + COD). Verified via curl and the Pricing estimator UI.
