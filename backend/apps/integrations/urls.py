@@ -7,6 +7,8 @@ from .views import (
     PaymentMappingListCreateView,
     PaymentMappingDeleteView,
     BulkPrepaidMappingView,
+    StatusMappingListCreateView,
+    StatusMappingDetailView,
 )
 
 urlpatterns = [
@@ -17,4 +19,6 @@ urlpatterns = [
     path("<int:pk>/payment-mappings/", PaymentMappingListCreateView.as_view(), name="payment-mapping-list"),
     path("<int:pk>/payment-mappings/bulk-prepaid/", BulkPrepaidMappingView.as_view(), name="payment-mapping-bulk-prepaid"),
     path("<int:pk>/payment-mappings/<int:mapping_pk>/", PaymentMappingDeleteView.as_view(), name="payment-mapping-delete"),
+    path("<int:pk>/status-mappings/", StatusMappingListCreateView.as_view(), name="status-mapping-list"),
+    path("<int:pk>/status-mappings/<int:mapping_pk>/", StatusMappingDetailView.as_view(), name="status-mapping-detail"),
 ]

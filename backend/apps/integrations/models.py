@@ -89,6 +89,25 @@ def resolve_payment_type(integration, store_method_name):
     return mapping.mapped_type if mapping else None
 
 
+class ChannelStatusMapping(TimeStampedModel):
+    """Maps a platform shipment status → the store's order status (PRD Module 3,
+    Step 6). Each mapping can be toggled on/off. The actual push to the store
+    API is vendor work (deferred); this stores the configuration."""
+
+    integration = models.ForeignKey(
+        ChannelIntegration, on_delete=models.CASCADE, related_name="status_mappings"
+    )
+    platform_status = models.CharField(max_length=40)   # e.g. "DELIVERED", "IN_TRANSIT"
+    store_status = models.CharField(max_length=60)       # e.g. "Completed", "Shipped"
+    is_enabled = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [("integration", "platform_status")]
+
+    def __str__(self):
+        return f"{self.integration_id}: {self.platform_status} → {self.store_status}"
+
+
 class IntegrationSyncLog(TimeStampedModel):
     """Log of order sync events from channels."""
     

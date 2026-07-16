@@ -9,6 +9,7 @@ from .models import (
     ChannelIntegration,
     IntegrationSyncLog,
     ChannelPaymentMapping,
+    ChannelStatusMapping,
     resolve_payment_type,
 )
 from .serializers import (
@@ -16,6 +17,7 @@ from .serializers import (
     ChannelIntegrationCreateSerializer,
     IntegrationSyncLogSerializer,
     ChannelPaymentMappingSerializer,
+    ChannelStatusMappingSerializer,
 )
 
 
@@ -67,6 +69,37 @@ class PaymentMappingDeleteView(generics.DestroyAPIView):
         )
 
     lookup_url_kwarg = "mapping_pk"
+
+
+class StatusMappingListCreateView(generics.ListCreateAPIView):
+    """GET/POST /api/integrations/<pk>/status-mappings/"""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ChannelStatusMappingSerializer
+
+    def _integration(self):
+        return generics.get_object_or_404(
+            ChannelIntegration, pk=self.kwargs["pk"], merchant=get_merchant(self.request)
+        )
+
+    def get_queryset(self):
+        return ChannelStatusMapping.objects.filter(integration=self._integration())
+
+    def perform_create(self, serializer):
+        serializer.save(integration=self._integration())
+
+
+class StatusMappingDetailView(generics.UpdateAPIView, generics.DestroyAPIView):
+    """PATCH/DELETE /api/integrations/<pk>/status-mappings/<mapping_pk>/
+    PATCH toggles is_enabled or edits store_status."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = ChannelStatusMappingSerializer
+    lookup_url_kwarg = "mapping_pk"
+
+    def get_queryset(self):
+        return ChannelStatusMapping.objects.filter(
+            integration__pk=self.kwargs["pk"],
+            integration__merchant=get_merchant(self.request),
+        )
 
 
 class BulkPrepaidMappingView(APIView):
