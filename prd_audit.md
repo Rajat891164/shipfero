@@ -62,7 +62,34 @@ PRD re-comb. All in-scope (no new infra / no paid vendor). Grep-confirmed gaps n
 - Customer SMS/Email/WhatsApp notifications (Twilio/MSG91/Meta WABA).
 - Real wallet recharge (Razorpay/PayU) + penny-drop bank verify (Razorpay/Digio).
 - Actual status-pushback API calls to Shopify/Amazon/etc.
-- All 8 Add-ons (Module 12); Gen AI suite (Module 15, FastAPI + LLM).
+- All 8 Add-ons (Module 12).
+
+---
+
+## 🤖 Module 15 — Gen AI + Agentic Suite (broken out 2026-07-20 from the PDF)
+
+The tracker previously collapsed this to one Tier-C line. The PRD PDF details **14
+sub-features**. Re-tiered — several are **deterministic scoring/prediction that need
+NO LLM or vendor** (buildable now), the rest need an LLM (Claude API) and/or Tier-C vendors.
+
+**Gen AI features (8):**
+| Feature | PRD logic | Realistic tier |
+|---|---|---|
+| AI Courier Selector | weighted score 40% cost + 30% delivery% + 20% TAT + 10% NDR → top 3 | 🟢 **buildable now** (pure formula over rate cards + courier perf A13) |
+| RTO Risk Scorer | rule score: COD + tier-3 city + order value + address quality + history | 🟢 **buildable now** (heuristic, no LLM) |
+| COD Float Predictor | in-transit COD → next-7-day remittance per courier (D+2/D+3/D+7 cycles) | 🟢 **buildable now** (deterministic) |
+| Address Intelligence | typo/incomplete/pincode-vs-city mismatch detection | 🟡 mostly buildable (pincode dataset helps) |
+| NDR AI Classifier | reason → suggested action (+ WhatsApp sentiment) | 🔴 LLM (+ WABA for sentiment) |
+| Natural Language Reports | plain-English query → chart + answer | 🔴 LLM (Claude API) |
+| Churn Prediction | 21-day inactive → risk flag + re-engagement | 🟡 heuristic buildable; campaign send = Tier C |
+| AI Daily Briefing | AI-written daily summary of stats/anomalies | 🔴 LLM (Claude API) |
+
+**Agentic features (6):** Onboarding, NDR-Resolution, Courier-Optimization, Wallet-Management,
+Returns-Minimization, Customer-Experience(future) agents — all orchestrate the above +
+WhatsApp/Razorpay actions, so they need **Celery (Tier B) + LLM + Tier-C vendors**.
+
+> Takeaway: 3 Gen-AI features (Courier Selector, RTO Risk, COD Float Predictor) are pure
+> logic and could ship now; the LLM ones need a Claude API key (cost, but no other vendor).
 
 ---
 
@@ -71,3 +98,4 @@ PRD re-comb. All in-scope (no new infra / no paid vendor). Grep-confirmed gaps n
 - **2026-07-16** — **A1 done.** Rewrote `pricing.CompareRatesView` to compute real rates from rate cards (zone derivation + slab + fuel + COD). Verified via curl and the Pricing estimator UI.
 - **2026-07-16** — **A2–A7 done** (one grind). A2 shared rate engine (compare+serviceability), A3 payment-method mapping + processing guard, A4 status-pushback config, A5/A6 dashboard analytics (charts + top-10), A7 onboarding validations. Each verified live + committed independently. **Tier A round 1 complete.**
 - **2026-07-20** — **Loop audit (round 2).** Re-combed the PRD vs all docs; surfaced 7 more in-scope PRD features not previously tracked (A12–A18: manage-couriers toggle, courier performance, cheapest/fastest tags, return settings, return analytics, wallet estimate, re-sync failed orders). Grep-confirmed the code gaps for A13/A14/A15. Added to backlog above; not yet built.
+- **2026-07-20** — **Verified against the source PDF** (`ship/ship/ShipboltPRD.pdf`, 30 pages). Extracted its text and confirmed it is scope-identical to `converted.md` (same 15 modules, no hidden data-model/security/deployment section) — the whole audit was built on the complete PRD, nothing missed. Broke Module 15 (Gen AI) out into its 14 sub-features and re-tiered: 3 are deterministic/buildable-now, the rest need an LLM and/or Tier-C vendors.
