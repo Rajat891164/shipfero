@@ -2,7 +2,7 @@
 
 > **Kaise use karna:** Jaise-jaise kaam hota jaaye, yahan status update karte jao.
 > **Legend:** ✅ Done & verified · 🟡 Code written, not verified · 🔴 Broken/blocker · ⬜ Not started
-> **Last updated:** 2026-07-15 (Phase 2 in progress — frontend integration)
+> **Last updated:** 2026-07-16 (Phase 2 done + Phase 2.5 PRD-conformance A1–A7 done)
 
 ---
 
@@ -38,6 +38,27 @@ Frontend moved into monorepo at `frontend/` (was `D:\My files\ship\Admin_UI`). C
 2. Phase 3 backend: Celery + S3, then Add-ons/Gen AI.
 
 **Frontend commits so far:** `f0b4a7d` (monorepo move), `4838814` (CORS), `1b4627c` (api.js + Login), `06a177d` (Dashboard + sidebar), `c381577` (Orders), `069537f` (Wallet), NDR, `2309581` (Track), `f16a09b` (Onboarding + CourierSettings fix), `dc071ee` (OrderDetail + Returns + Pricing), `8ee03d0` (Reports + Settings + Integrations + Logistics), `8a20827` (shipfero_db seed dump).
+
+---
+
+## ✅ Phase 2.5 — PRD Conformance pass (A1–A7, DONE 2026-07-16)
+
+Ran a full PRD (`converted.md`) audit → backlog in [`prd_audit.md`](prd_audit.md), then
+ground the in-scope "Tier A" gaps (no new infra, no paid vendors). Each item verified
+live + committed independently.
+
+| # | Gap closed (PRD ref) | Commit |
+|---|----------------------|--------|
+| A1 | Pricing rate comparison was a **hardcoded stub** → real calc from rate cards (zone from pincode, weight slab, fuel %, COD) | `8ab43a6` |
+| A2 | Serviceability returned empty (dual rate systems) → **one shared rate engine** (`pricing/services.py`) powers both compare + serviceability | `b4802ea` |
+| A3 | **Payment Method Mapping** — model + CRUD + order-processing **blocked on unmapped** payment methods | `969fdb4` |
+| A4 | **Status Pushback Config** — mapping model + CRUD + per-mapping toggle (actual push to store is Tier C) | `434013d` |
+| A5/A6 | Dashboard **Business Summary Charts** (30-day trend, delivery%/RTO%, courier/channel split) + **Top-10** (cities/products/pincodes) | `34e39e8` |
+| A7 | Onboarding step-1 **validations** — GST 15-char, password strength, email-uniqueness on blur (new `GET /api/auth/check-email/`) | `5b65ee2` |
+
+**Tier A complete.** Remaining PRD work is Tier B (Celery/Redis/S3 infra) + Tier C (paid vendors) only — see `prd_audit.md`.
+
+---
 
 **Local dev environment note (2026-07-15):** machine changed from `kajal.dawas` user / `D:\My files\shipfero` path to `dishu` user / `C:\Users\dishu\kajal\shipfero`. Fixed: `backend/venv/pyvenv.cfg` repointed to the current Python install (venv is gitignored, packages were intact, just the interpreter path was stale). The Postgres `shipfero_db` database didn't exist on this machine's server yet — restored from the `shipfero_db` pg_dump file at repo root via `pg_restore` against PostgreSQL 15 (the instance listening on port 5432; this machine also has PG 14 on 5433 and PG 18 on 5434 installed side by side).
 
@@ -104,10 +125,10 @@ Signup → JWT login → email OTP verify (Module 1)
 
 ## 🟡 Known gaps / deferred (not bugs — scope calls, documented)
 
-- **Payment Method Mapping & Status Pushback Config** (Module 3 sub-features) — no models yet. PRD wants order processing blocked on unmapped payment methods; overlaps with Orders. Not built — flag if Orders/Integrations work resumes.
-- **Courier/Channel Health Monitor** background pings (Celery Beat, uptime %, alert history) — needs Celery, which isn't wired yet (Phase 3 per original plan). Test-connection/sync endpoints work synchronously as stand-ins.
-- **Reports** are synchronous stubs (instant `COMPLETED` with a dummy S3 URL) — real Celery-backed generation is Phase 3.
-- **Dashboard** Business Summary Charts (30-day trends) and Top-10 views — need historical aggregation beyond the current single-query dashboard.
+- ~~**Payment Method Mapping & Status Pushback Config**~~ ✅ **DONE** in Phase 2.5 (A3 `969fdb4`, A4 `434013d`). Order processing now blocks on unmapped payment methods; status-pushback config models built (actual push to store = Tier C vendor work).
+- ~~**Dashboard** Business Summary Charts + Top-10~~ ✅ **DONE** in Phase 2.5 (A5/A6 `34e39e8`).
+- **Courier/Channel Health Monitor** background pings (Celery Beat, uptime %, alert history) — needs Celery, which isn't wired yet (Tier B). Test-connection/sync endpoints work synchronously as stand-ins.
+- **Reports** are synchronous stubs (instant `COMPLETED` with a dummy S3 URL) — real Celery-backed generation is Tier B.
 - `User.mobile` required+unique but not in `REQUIRED_FIELDS` — `createsuperuser` leaves it `''`; fine for one superuser, risky for a second.
 - `config/settings_old.py` — legacy file, harmless, cleanup pending.
 - `django-cors-headers` referenced via `CORS_ALLOW_ALL_ORIGINS` setting but package not installed — no-op today, **will matter once frontend (different port) starts calling the API** — needed in Phase 2.
@@ -153,10 +174,10 @@ Scaffolded (UI bana, backend se juda nahi): Login, Onboarding, Dashboard, Orders
 
 1. ~~Phase 0 foundation~~ ✅
 2. ~~Phase 1: all core backend modules~~ ✅
-3. **Phase 2: Frontend integration** — rewire `api.js`, add CORS, wire pages one by one starting with Login → Onboarding → Dashboard.
-4. Phase 3: Celery + S3 (health monitors, real report generation, webhook async processing).
-5. Payment Method Mapping / Status Pushback Config (deferred gap above).
-6. Add-ons + Gen AI (future, PRD itself marks these lower priority).
+3. ~~Phase 2: Frontend integration (15/16 pages)~~ ✅
+4. ~~Phase 2.5: PRD conformance Tier A (A1–A7)~~ ✅
+5. **Phase 3 (Tier B): Celery + Redis + S3** — async report generation, courier/channel health monitors, async webhook processing, manifest PDFs, file uploads.
+6. **Tier C (needs paid vendor accounts):** SMS/WhatsApp notifications, real payment gateway, Add-ons (Module 12), Gen AI (Module 15). Blocked on external accounts — business decision.
 
 ---
 
@@ -166,3 +187,4 @@ Scaffolded (UI bana, backend se juda nahi): Login, Onboarding, Dashboard, Orders
 - **2026-07-10** — **Phase 0 complete.** Backend migrated to real PostgreSQL, JWT routes fixed, onboarding verified end-to-end.
 - **2026-07-10** — **Phase 1 complete.** All 12 core PRD modules (2–11, 13, 14) reviewed, bug-fixed (11 real bugs beyond the recurring merchant-500 pattern — see table above), and verified end-to-end in one continuous session against real PostgreSQL. Full regression sweep of 22 endpoints all green. 12 commits, each independently revertable.
 - **2026-07-15** — **Phase 2 essentially complete.** Restored the local dev environment on the new machine (venv interpreter repointed, `shipfero_db` restored from the committed dump). Fixed the 2 broken pages (Onboarding, CourierSettings) and wired the remaining 7 mock pages (OrderDetail, Returns, Pricing, Reports, Settings, Integrations, Logistics) — all 15 non-AddOns pages now live-verified against the real backend. Seeded 5 pricing zones + 40 rate cards and refreshed the DB dump. Commits `f16a09b`, `dc071ee`, `8ee03d0`, `8a20827`, `1a179fc`, `8a21a3d`. Only AddOns remains (deferred — no backend). Next real work: Phase 3 (Celery + S3).
+- **2026-07-16** — **Phase 2.5 complete (PRD conformance Tier A).** Full PRD audit → `prd_audit.md` backlog, then closed all 7 Tier-A gaps (A1–A7): real rate engine, payment-method mapping + processing guard, status-pushback config, dashboard charts + top-10, onboarding validations. Each verified live + committed (`8ab43a6`, `b4802ea`, `969fdb4`, `434013d`, `34e39e8`, `5b65ee2`). Remaining PRD work is Tier B (Celery/S3) + Tier C (paid vendors) only.
