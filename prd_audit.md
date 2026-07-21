@@ -36,6 +36,20 @@ but it means "conformance" here = the **feature/data-model** gaps below, not the
 
 > Items A8–A11 start as **verify** — they may already be done from Phase 1; confirm before building.
 
+### Round 2 — newly surfaced (2026-07-20 loop audit)
+PRD features found **absent from project.md / progress.md / prd_audit.md** on a fresh
+PRD re-comb. All in-scope (no new infra / no paid vendor). Grep-confirmed gaps noted.
+
+| # | Module | Gap (PRD ref) | Status |
+|---|--------|---------------|--------|
+| A12 | 9 Logistics | **Manage Couriers** — per-merchant enable/disable toggle controlling which couriers appear in the booking flow. `couriers.MerchantCourier.Status` exists but no dedicated toggle endpoint/UI. | ⬜ verify+build |
+| A13 | 9 Logistics | **Courier Performance dashboard** — per-courier Delivery% / avg TAT / NDR% / RTO%, sortable, date-filtered. *Grep-confirmed: no performance view in `carriers`.* | ⬜ |
+| A14 | 9/11 | **Cheapest / Fastest tags** on rate comparison + serviceability output (PRD calls for 💰/⚡ badges). Trivial — derive from the quotes the shared engine already returns. *Grep-confirmed absent.* | ⬜ |
+| A15 | 8 Returns | **Return Settings** — auto-RTO threshold (max NDR, default 3 / max 5), reverse-pickup auto-create vs manual approval, customizable return-reason-code list. *Grep-confirmed: no `ReturnSetting` model.* | ⬜ |
+| A16 | 8 Returns | **Return Analytics** — return rate by SKU / courier / city, avg return cycle time, top-10 return reasons. | ⬜ verify |
+| A17 | 10 Wallet | **Estimated orders remaining** (balance ÷ avg shipment cost) + low-balance threshold badge on the balance card. | ⬜ small |
+| A18 | 3 Channel | **Re-sync Failed Orders** — retry failed orders from a specific sync log (sync part is sync-stub today; the retry endpoint itself is buildable). | ⬜ |
+
 ---
 
 ## 🟠 Tier B — needs Phase 3 infra (Celery / Redis / S3) — deferred
@@ -55,4 +69,5 @@ but it means "conformance" here = the **feature/data-model** gaps below, not the
 ## 📓 Iteration log
 - **2026-07-16** — Backlog created (iteration 0). Full PRD read (modules 1–14), cross-checked vs code. Found the dual rate-system inconsistency (A1/A2) as the headline gap.
 - **2026-07-16** — **A1 done.** Rewrote `pricing.CompareRatesView` to compute real rates from rate cards (zone derivation + slab + fuel + COD). Verified via curl and the Pricing estimator UI.
-- **2026-07-16** — **A2–A7 done** (one grind). A2 shared rate engine (compare+serviceability), A3 payment-method mapping + processing guard, A4 status-pushback config, A5/A6 dashboard analytics (charts + top-10), A7 onboarding validations. Each verified live + committed independently. **Tier A complete.** Remaining backlog is Tier B (Celery/S3) + Tier C (paid vendors) only.
+- **2026-07-16** — **A2–A7 done** (one grind). A2 shared rate engine (compare+serviceability), A3 payment-method mapping + processing guard, A4 status-pushback config, A5/A6 dashboard analytics (charts + top-10), A7 onboarding validations. Each verified live + committed independently. **Tier A round 1 complete.**
+- **2026-07-20** — **Loop audit (round 2).** Re-combed the PRD vs all docs; surfaced 7 more in-scope PRD features not previously tracked (A12–A18: manage-couriers toggle, courier performance, cheapest/fastest tags, return settings, return analytics, wallet estimate, re-sync failed orders). Grep-confirmed the code gaps for A13/A14/A15. Added to backlog above; not yet built.
