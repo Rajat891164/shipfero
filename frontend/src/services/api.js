@@ -1,5 +1,5 @@
 import axios from 'axios';
-
+ 
 /**
  * API abstraction layer for the Shipfero backend (Django + DRF + SimpleJWT).
  *
@@ -7,13 +7,13 @@ import axios from 'axios';
  * is attached to every request; on a 401 we transparently refresh using the
  * refresh token and retry the original request once.
  */
-
+ 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
-
+ 
 // Token storage keys — kept in sync with useAuthStore.
 const ACCESS_TOKEN_KEY = 'auth_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
-
+ 
 export const tokenStore = {
   getAccess: () => localStorage.getItem(ACCESS_TOKEN_KEY),
   getRefresh: () => localStorage.getItem(REFRESH_TOKEN_KEY),
@@ -26,15 +26,15 @@ export const tokenStore = {
     localStorage.removeItem(REFRESH_TOKEN_KEY);
   },
 };
-
+ 
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
 });
-
+ 
 // A bare client (no interceptors) for the refresh call itself, to avoid loops.
 const refreshClient = axios.create({ baseURL: API_URL });
-
+ 
 // REQUEST: attach the access token.
 api.interceptors.request.use(
   (config) => {
@@ -44,12 +44,12 @@ api.interceptors.request.use(
   },
   (error) => Promise.reject(error)
 );
-
+ 
 // RESPONSE: on 401, refresh once and retry. Queue concurrent 401s so we only
 // refresh a single time.
 let isRefreshing = false;
 let pendingQueue = [];
-
+ 
 const flushQueue = (error, token = null) => {
   pendingQueue.forEach(({ resolve, reject }) => {
     if (error) reject(error);
@@ -57,31 +57,31 @@ const flushQueue = (error, token = null) => {
   });
   pendingQueue = [];
 };
-
+ 
 const forceLogout = () => {
   tokenStore.clear();
   localStorage.removeItem('auth-storage');
   if (window.location.pathname !== '/login') window.location.href = '/login';
 };
-
+ 
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
     const status = error.response?.status;
-
+ 
     // Don't try to refresh the refresh/login calls themselves.
     const isAuthCall =
       originalRequest?.url?.includes('/auth/token/') ||
       originalRequest?.url?.includes('/auth/token/refresh/');
-
+ 
     if (status === 401 && !originalRequest._retry && !isAuthCall) {
       const refresh = tokenStore.getRefresh();
       if (!refresh) {
         forceLogout();
         return Promise.reject(error);
       }
-
+ 
       if (isRefreshing) {
         // Wait for the in-flight refresh, then retry.
         return new Promise((resolve, reject) => {
@@ -93,10 +93,10 @@ api.interceptors.response.use(
           })
           .catch((err) => Promise.reject(err));
       }
-
+ 
       originalRequest._retry = true;
       isRefreshing = true;
-
+ 
       try {
         const { data } = await refreshClient.post('/auth/token/refresh/', { refresh });
         tokenStore.set(data.access, data.refresh); // rotation enabled server-side
@@ -112,15 +112,15 @@ api.interceptors.response.use(
         isRefreshing = false;
       }
     }
-
+ 
     return Promise.reject(error);
   }
 );
-
+ 
 // Unwrap paginated DRF responses ({count, results}) vs plain arrays/objects.
 export const unwrap = (data) =>
   data && Array.isArray(data.results) ? data.results : data;
-
+ 
 // ─── Auth (/api/auth/) ────────────────────────────────────────────────────
 export const AuthService = {
   login: (email, password) => api.post('/auth/token/', { email, password }),
@@ -130,7 +130,7 @@ export const AuthService = {
   sendEmailOtp: () => api.post('/auth/send-email-otp/'),
   verifyEmailOtp: (code) => api.post('/auth/verify-email-otp/', { code }),
 };
-
+ 
 // ─── Merchants / Onboarding (/api/merchants/) ─────────────────────────────
 export const MerchantService = {
   me: () => api.get('/merchants/me/'),
@@ -147,10 +147,12 @@ export const MerchantService = {
   addBankDetails: (data) => api.post('/merchants/onboarding/bank-details/', data),
   listPickupLocations: () => api.get('/merchants/onboarding/pickup-locations/'),
   addPickupLocation: (data) => api.post('/merchants/onboarding/pickup-locations/', data),
+  updatePickupLocation: (id, data) => api.patch(`/merchants/onboarding/pickup-locations/${id}/`, data),
+  deletePickupLocation: (id) => api.delete(`/merchants/onboarding/pickup-locations/${id}/`),
   completeOnboarding: () => api.post('/merchants/onboarding/complete/'),
   plan: () => api.get('/merchants/plan/'),
 };
-
+ 
 // ─── Orders (/api/orders/) ────────────────────────────────────────────────
 export const OrderService = {
   list: (params) => api.get('/orders/', { params }),
@@ -163,7 +165,7 @@ export const OrderService = {
   cancel: (id, data) => api.post(`/orders/${id}/cancel/`, data),
   stats: () => api.get('/orders/stats/'),
 };
-
+ 
 // ─── Shipments (/api/shipments/) ──────────────────────────────────────────
 export const ShipmentService = {
   list: (params) => api.get('/shipments/', { params }),
@@ -171,13 +173,13 @@ export const ShipmentService = {
   book: (id) => api.post(`/shipments/${id}/book/`),
   stats: () => api.get('/shipments/stats/'),
 };
-
+ 
 // ─── Tracking (/api/tracking/) ────────────────────────────────────────────
 export const TrackingService = {
   timeline: (awb) => api.get(`/tracking/${awb}/`),
   analytics: () => api.get('/tracking/analytics/'),
 };
-
+ 
 // ─── NDR (/api/ndr/) ──────────────────────────────────────────────────────
 export const NdrService = {
   list: (params) => api.get('/ndr/', { params }),
@@ -186,7 +188,7 @@ export const NdrService = {
   takeAction: (id, data) => api.post(`/ndr/${id}/action/`, data),
   bulkAction: (data) => api.post('/ndr/bulk-action/', data),
 };
-
+ 
 // ─── Returns (/api/returns/) ──────────────────────────────────────────────
 export const ReturnService = {
   list: (params) => api.get('/returns/', { params }),
@@ -195,7 +197,7 @@ export const ReturnService = {
   markReceived: (id) => api.post(`/returns/${id}/mark-received/`),
   stats: () => api.get('/returns/stats/'),
 };
-
+ 
 // ─── Carriers (/api/carriers/) ────────────────────────────────────────────
 export const CarrierService = {
   list: () => api.get('/carriers/'),
@@ -203,7 +205,7 @@ export const CarrierService = {
   serviceability: (data) => api.post('/carriers/serviceability/', data),
   calculateRate: (data) => api.post('/carriers/calculate-rate/', data),
 };
-
+ 
 // ─── Couriers — merchant-configured (/api/couriers/) ──────────────────────
 export const CourierService = {
   list: () => api.get('/couriers/'),
@@ -213,8 +215,12 @@ export const CourierService = {
   remove: (id) => api.delete(`/couriers/${id}/`),
   test: (id) => api.post(`/couriers/${id}/test/`),
   health: (id) => api.get(`/couriers/${id}/health/`),
+  // Live Product/SubProduct catalog — account-specific, always fetched
+  // from the carrier rather than hardcoded.
+  fetchSavedProducts: (id) => api.get(`/couriers/${id}/products/`),
+  fetchUnsavedProducts: (data) => api.post('/couriers/products/', data),
 };
-
+ 
 // ─── Integrations (/api/integrations/) ────────────────────────────────────
 export const IntegrationService = {
   list: () => api.get('/integrations/'),
@@ -225,14 +231,14 @@ export const IntegrationService = {
   sync: (id) => api.post(`/integrations/${id}/sync/`),
   logs: (id) => api.get(`/integrations/${id}/logs/`),
 };
-
+ 
 // ─── Pricing (/api/pricing/) ──────────────────────────────────────────────
 export const PricingService = {
   rateCards: (params) => api.get('/pricing/rate-cards/', { params }),
   zones: () => api.get('/pricing/zones/'),
   compare: (data) => api.post('/pricing/compare/', data),
 };
-
+ 
 // ─── Billing / Wallet (/api/billing/) ─────────────────────────────────────
 export const BillingService = {
   wallet: () => api.get('/billing/wallet/'),
@@ -241,7 +247,7 @@ export const BillingService = {
   invoices: (params) => api.get('/billing/invoices/', { params }),
   summary: () => api.get('/billing/summary/'),
 };
-
+ 
 // ─── Reports (/api/reports/) ──────────────────────────────────────────────
 export const ReportService = {
   list: () => api.get('/reports/'),
@@ -250,7 +256,7 @@ export const ReportService = {
   scheduledList: () => api.get('/reports/scheduled/'),
   createScheduled: (data) => api.post('/reports/scheduled/', data),
 };
-
+ 
 // ─── Notifications (/api/notifications/) ──────────────────────────────────
 export const NotificationService = {
   list: () => api.get('/notifications/'),
@@ -258,7 +264,7 @@ export const NotificationService = {
   markRead: (id) => api.post(`/notifications/${id}/read/`),
   markAllRead: () => api.post('/notifications/mark-all-read/'),
 };
-
+ 
 // ─── Settings (/api/settings/) ────────────────────────────────────────────
 export const SettingsService = {
   listApiKeys: () => api.get('/settings/api-keys/'),
@@ -268,5 +274,6 @@ export const SettingsService = {
   inviteStaff: (data) => api.post('/settings/staff/invite/', data),
   auditLogs: () => api.get('/settings/audit-logs/'),
 };
-
+ 
 export default api;
+ 

@@ -18,10 +18,9 @@ const Reports = lazy(() => import('./pages/Reports'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Integrations = lazy(() => import('./pages/Integrations'));
 const AddOns = lazy(() => import('./pages/AddOns'));
+const ManualOrder = lazy(() => import('./pages/ManualOrder'));
 
 const Onboarding = lazy(() => import('./pages/Onboarding'));
-
-const CourierSettings = lazy(() => import('./pages/CourierSettings'));
 
 import useAuthStore from './store/useAuthStore';
 
@@ -31,29 +30,63 @@ function App() {
   return (
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
+        {/* Public / auth routes */}
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Onboarding />} />
         <Route path="/onboarding" element={<Onboarding />} />
-        
-        <Route element={isAuthenticated ? <Layout /> : <Navigate to="/login" />}>
-          <Route path="/" element={<Navigate to="/dashboard" />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/orders/:id" element={<OrderDetail />} />
-          <Route path="/track" element={<Track />} />
-          <Route path="/returns" element={<Returns />} />
-          <Route path="/ndr" element={<NDR />} />
-          <Route path="/logistics" element={<Logistics />} />
-          <Route path="/wallet" element={<Wallet />} />
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/settings/couriers" element={<CourierSettings />} />
-          <Route path="/integrations" element={<Integrations />} />
-          <Route path="/add-ons" element={<AddOns />} />
-        </Route>
 
-        <Route path="*" element={<Navigate to="/dashboard" />} />
+        {/* Protected routes under main layout */}
+        <Route
+          path="/*"
+          element={
+            isAuthenticated ? (
+              <Layout>
+                <Routes>
+                  <Route path="dashboard" element={<Dashboard />} />
+
+                  {/* Orders section */}
+                  <Route path="orders" element={<Orders />} />
+                  <Route path="orders/:id" element={<OrderDetail />} />
+                  <Route path="orders/manual" element={<ManualOrder />} />
+
+                  {/* Tracking */}
+                  <Route path="track" element={<Track />} />
+
+                  {/* Returns */}
+                  <Route path="returns" element={<Returns />} />
+
+                  {/* NDR */}
+                  <Route path="ndr" element={<NDR />} />
+
+                  {/* Logistics */}
+                  <Route path="logistics" element={<Logistics />} />
+
+                  {/* Wallet / Financials */}
+                  <Route path="wallet" element={<Wallet />} />
+
+                  {/* Pricing */}
+                  <Route path="pricing" element={<Pricing />} />
+
+                  {/* Reports */}
+                  <Route path="reports" element={<Reports />} />
+
+                  {/* Settings */}
+                  <Route path="settings" element={<Settings />} />
+
+                  {/* Integrations */}
+                  <Route path="integrations" element={<Integrations />} />
+
+                  {/* Add-ons */}
+                  <Route path="addons" element={<AddOns />} />
+
+                  {/* Default redirect */}
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                </Routes>
+              </Layout>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
       </Routes>
     </Suspense>
   );

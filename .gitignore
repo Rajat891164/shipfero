@@ -34,3 +34,5 @@ build/
 
 # PostgreSQL Backup
 *.sql
+.claude/settings.local.json
+

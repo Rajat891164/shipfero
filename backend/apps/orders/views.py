@@ -13,6 +13,8 @@ from apps.merchants.models import Merchant, PickupLocation
 from apps.shipments.models import Shipment, ShipmentStatusEvent
 from apps.billing.models import Wallet, WalletTransaction
 from apps.notifications.models import create_notification
+from apps.couriers.models import MerchantCourier
+from apps.couriers.services.bluedart import BlueDartService
 from core.utils import get_merchant
 
 from .models import Order, OrderItem, OrderStatusHistory
@@ -212,6 +214,14 @@ def _book_awb_for_order(merchant, order, carrier, service_type, pickup_location,
             "available": str(wallet.balance),
         }
 
+    # Courier must be configured for this merchant BEFORE we touch the DB —
+    # fail fast rather than creating a Shipment we then have to unwind.
+    merchant_courier = MerchantCourier.objects.filter(
+        merchant=merchant, carrier=carrier, status="ACTIVE"
+    ).first()
+    if not merchant_courier:
+        return None, {"detail": f"{carrier.name} is not configured for this merchant."}
+
     with transaction.atomic():
         shipment = Shipment.objects.create(
             merchant=merchant,
@@ -247,6 +257,32 @@ def _book_awb_for_order(merchant, order, carrier, service_type, pickup_location,
             product_name=order.items.first().product_name if order.items.exists() else "",
             product_quantity=order.items.aggregate(total=Sum("quantity"))["total"] or 1,
         )
+
+        # ── Live courier call — this is what actually books the shipment
+        # with the carrier and gets back a real AWB number / label ──────
+        courier_service = BlueDartService(merchant_courier)
+
+        try:
+            courier_response = courier_service.create_shipment(shipment)
+        except Exception as exc:
+            transaction.set_rollback(True)
+            return None, {"detail": f"Courier booking failed: {exc}"}
+
+        awb_no = (
+            courier_response.get("AWBNo")
+            or courier_response.get("Response", {}).get("AWBNo")
+        )
+        if not awb_no:
+            transaction.set_rollback(True)
+            return None, {
+                "detail": "Courier did not return an AWB number.",
+                "raw": courier_response,
+            }
+
+        shipment.awb_number = awb_no
+        shipment.tracking_id = awb_no
+        shipment.save(update_fields=["awb_number", "tracking_id"])
+        # ── end courier call block ───────────────────────────────────────
 
         ShipmentStatusEvent.objects.create(
             shipment=shipment,
@@ -299,9 +335,10 @@ class BookAWBView(APIView):
     POST /api/orders/<id>/book-awb/
     Book AWB for a PROCESSING order:
     1. Check KYC + wallet balance
-    2. Create Shipment + AWB
-    3. Deduct wallet
-    4. Move order to BOOKED
+    2. Call courier API to create shipment + get AWB
+    3. Create Shipment + AWB
+    4. Deduct wallet
+    5. Move order to BOOKED
     """
     permission_classes = [IsAuthenticated]
 
@@ -317,7 +354,7 @@ class BookAWBView(APIView):
                 {"detail": "Only PROCESSING orders can have AWB booked."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
+        # TEMP DEV – allow AWB regardless of KYC
         if merchant.kyc_status != Merchant.KYCStatus.VERIFIED:
             return Response(
                 {"detail": "AWB booking blocked. KYC not verified yet."},

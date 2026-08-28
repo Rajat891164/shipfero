@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -16,7 +16,7 @@ const pageTransition = {
   ease: [0.4, 0, 0.2, 1],
 };
 
-const Layout = () => {
+const Layout = ({ children }) => {
   const { theme } = useUIStore();
   const location = useLocation();
 
@@ -49,7 +49,7 @@ const Layout = () => {
               exit="exit"
               transition={pageTransition}
             >
-              <Outlet />
+              {children}
             </motion.div>
           </AnimatePresence>
         </main>
