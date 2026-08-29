@@ -111,11 +111,15 @@ class MerchantCourierListCreateView(generics.ListCreateAPIView):
         instance.last_test_status = "Authentication Successful"
         instance.last_tested_at = timezone.now()
 
+        # `instance.is_default` may have just been set above (when this is
+        # the first profile for this merchant+carrier) — it must be in
+        # update_fields or that change silently never reaches the database.
         instance.save(
             update_fields=[
                 "status",
                 "last_test_status",
                 "last_tested_at",
+                "is_default",
             ]
         )
 

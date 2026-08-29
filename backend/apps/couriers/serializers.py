@@ -136,7 +136,16 @@ class MerchantCourierCreateSerializer(serializers.ModelSerializer):
         return credentials
 
     def create(self, validated_data):
-        merchant = get_merchant(self.context["request"])
+        # The view (MerchantCourierListCreateView.perform_create) already
+        # resolves the correct merchant and passes it into serializer.save(
+        # merchant=merchant), so it arrives here inside validated_data.
+        # Previously this line silently re-derived its own merchant via
+        # get_merchant(request) and overwrote the one the view passed in —
+        # under AllowAny (no authenticated session) that resolved to a
+        # different merchant than the hardcoded one every read endpoint
+        # filters by, so newly created rows saved successfully but were
+        # invisible to GET /api/couriers/ and /api/couriers/<id>/test/.
+        merchant = validated_data.get("merchant") or get_merchant(self.context["request"])
 
         if validated_data.get("is_default"):
             MerchantCourier.objects.filter(
@@ -152,7 +161,11 @@ class MerchantCourierCreateSerializer(serializers.ModelSerializer):
         return MerchantCourier.objects.create(**validated_data)
 
     def update(self, instance, validated_data):
-        merchant = get_merchant(self.context["request"])
+        # Use the merchant the row already belongs to, rather than
+        # re-deriving one via get_merchant(request) — same class of bug as
+        # create() above: under AllowAny, that can resolve to a different
+        # merchant than the one that actually owns `instance`.
+        merchant = instance.merchant
 
         if validated_data.get("is_default"):
             MerchantCourier.objects.filter(
