@@ -105,20 +105,6 @@ const DEFAULT_FORM = {
 
 const cloneDefaultForm = () => ({ ...DEFAULT_FORM });
 
-// Credential/secret fields are never returned by a well-behaved backend for
-// display, and must never be prefilled or overwritten with an empty value
-// when editing an existing saved profile.
-const SECRET_FIELDS = [
-  'license_key',
-  'tracking_license_key',
-  'api_token',
-  'api_user_password',
-  'secret_key',
-  'client_secret',
-  'authorization_header',
-  'password',
-];
-
 const getCarrierInitials = (carrier) => {
   if (!carrier) return 'CO';
   return carrier.initials || DIRECT_COURIER_CATALOG.find((x) => x.code === carrier.code)?.initials ||
@@ -184,7 +170,6 @@ const CourierSettings = () => {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [saveError, setSaveError] = useState(null);
-  const [editingCourierId, setEditingCourierId] = useState(null); // id of the saved profile being edited, or null when adding new
   const [activeTab, setActiveTab] = useState('DIRECT');
   const [searchQuery, setSearchQuery] = useState('');
   const [capabilityFilter, setCapabilityFilter] = useState('All Capabilities');
@@ -238,41 +223,8 @@ const CourierSettings = () => {
     setSaveError(null);
     setLiveProducts(null);
     setProductsError(null);
-    setEditingCourierId(null);
     setFormData(cloneDefaultForm());
   };
-
-  // Finds a previously-saved profile for this carrier code, preferring the
-  // default one if there are several (e.g. multiple Blue Dart profiles).
-  const findExistingConfig = (code) => {
-    const matches = configured.filter((c) =>
-      getCarrierCode(c.carrier_code ? { code: c.carrier_code } : c.carrier) === code ||
-      getCarrierCode(c.carrier) === code ||
-      c.carrier_code === code
-    );
-    if (matches.length === 0) return null;
-    return matches.find((m) => m.is_default) || matches[0];
-  };
-
-  // Builds form state from a saved config for editing. Secret fields
-  // (license keys, passwords, tokens, etc.) are deliberately left blank —
-  // APIs don't return these for display, and the save step below is written
-  // to leave the existing saved secret untouched unless the user retypes it.
-  const buildFormFromConfig = (config) => {
-    const base = cloneDefaultForm();
-    if (!config) return base;
-    Object.keys(base).forEach((key) => {
-      if (SECRET_FIELDS.includes(key)) return;
-      if (config[key] !== undefined && config[key] !== null) {
-        base[key] = config[key];
-      }
-    });
-    return base;
-  };
-
-  // Password-type fields show this instead of a normal placeholder while
-  // editing, so it's clear leaving them blank keeps the saved value.
-  const securePlaceholder = (fallback) => (editingCourierId ? 'Saved — leave blank to keep unchanged' : fallback);
 
   const setField = (k, v) => {
     setFormData((f) => ({ ...f, [k]: typeof v === 'function' ? v(f[k]) : v }));
@@ -349,19 +301,12 @@ const CourierSettings = () => {
     const code = getCarrierCode(selectedCarrier);
     const required = getRequiredFields(code);
     if (code === 'SHADOWFAX') {
-      // On edit, a blank secret field means "keep the saved value" — only
-      // enforce these when adding a fresh profile.
-      if (!editingCourierId) {
-        if (formData.authentication_mode === 'TOKEN' && !formData.api_token.trim()) return 'API Token is required.';
-        if (formData.authentication_mode === 'OAUTH2' && (!formData.client_id.trim() || !formData.client_secret.trim())) {
-          return 'Client ID and Client Secret are required for OAuth2.';
-        }
+      if (formData.authentication_mode === 'TOKEN' && !formData.api_token.trim()) return 'API Token is required.';
+      if (formData.authentication_mode === 'OAUTH2' && (!formData.client_id.trim() || !formData.client_secret.trim())) {
+        return 'Client ID and Client Secret are required for OAuth2.';
       }
     }
-    // Required secret fields are allowed to stay blank while editing an
-    // existing profile — blank means "keep what's already saved".
-    const effectiveRequired = editingCourierId ? required.filter((f) => !SECRET_FIELDS.includes(f)) : required;
-    const missing = effectiveRequired.filter((field) => !String(formData[field] ?? '').trim());
+    const missing = required.filter((field) => !String(formData[field] ?? '').trim());
     if (missing.length > 0) return `${missing.map((x) => x.replaceAll('_', ' ')).join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`;
     return null;
   };
@@ -575,40 +520,21 @@ const CourierSettings = () => {
         payload = { carrier: selectedCarrier.id };
       }
 
-      // Never send an empty secret field on an edit — that would overwrite
-      // the already-saved credential with a blank value. Leaving these
-      // fields untouched in the form means "keep what's saved".
-      if (editingCourierId) {
-        SECRET_FIELDS.forEach((key) => {
-          if (key in payload && !String(payload[key] ?? '').trim()) {
-            delete payload[key];
-          }
-        });
-      }
+      // First profile for a carrier becomes the default automatically.
+      // Additional profiles are saved normally and can be made default from the UI.
+      const alreadyConfiguredForCarrier = configured.some((item) =>
+        Number(item.carrier) === Number(selectedCarrier.id) ||
+        item.carrier_code === code ||
+        getCarrierCode(item.carrier) === code
+      );
+      payload.is_default = !alreadyConfiguredForCarrier;
 
-      if (editingCourierId) {
-        // Preserve the existing default status rather than recomputing it —
-        // this is an update to an existing profile, not a new one.
-        const existing = configured.find((item) => Number(item.id) === Number(editingCourierId));
-        payload.is_default = existing ? !!existing.is_default : payload.is_default;
-        await CourierService.update(editingCourierId, payload);
-      } else {
-        // First profile for a carrier becomes the default automatically.
-        // Additional profiles are saved normally and can be made default from the UI.
-        const alreadyConfiguredForCarrier = configured.some((item) =>
-          Number(item.carrier) === Number(selectedCarrier.id) ||
-          item.carrier_code === code ||
-          getCarrierCode(item.carrier) === code
-        );
-        payload.is_default = !alreadyConfiguredForCarrier;
+      const { data } = await CourierService.add(payload);
 
-        const { data } = await CourierService.add(payload);
-
-        try {
-          await CourierService.test(data.id);
-        } catch {
-          // Non-fatal: configuration remains saved so the user can inspect the response/status.
-        }
+      try {
+        await CourierService.test(data.id);
+      } catch {
+        // Non-fatal: configuration remains saved so the user can inspect the response/status.
       }
 
       resetWizard();
@@ -798,11 +724,7 @@ const CourierSettings = () => {
     setSaveError(null);
     setLiveProducts(null);
     setProductsError(null);
-
-    const existing = findExistingConfig(getCarrierCode(carrier));
-    setEditingCourierId(existing ? existing.id : null);
-    setFormData(buildFormFromConfig(existing));
-
+    setFormData(cloneDefaultForm());
     // Catalog may have been provisioned on the backend after this page first
     // loaded (e.g. Blue Dart just added). Refresh so `selectedCarrier.id`
     // isn't a stale `null` from an earlier fetch.
@@ -817,7 +739,6 @@ const CourierSettings = () => {
     setSaveError(null);
     setLiveProducts(null);
     setProductsError(null);
-    setEditingCourierId(null);
     setFormData(cloneDefaultForm());
     fetchData();
   };
@@ -844,8 +765,8 @@ const CourierSettings = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Field label="Profile Name" required value={formData.profile_name} onChange={(v) => setField('profile_name', v)} placeholder="Profile name" />
               <Field label="Login ID" required value={formData.login_id} onChange={(v) => setField('login_id', v)} placeholder="Blue Dart Login ID" />
-              <Field label="License Key" required type="password" value={formData.license_key} onChange={(v) => setField('license_key', v)} placeholder={securePlaceholder('License Key')} />
-              <Field label="Tracking License Key" type="password" value={formData.tracking_license_key} onChange={(v) => setField('tracking_license_key', v)} placeholder={securePlaceholder('Tracking License Key')} />
+              <Field label="License Key" required type="password" value={formData.license_key} onChange={(v) => setField('license_key', v)} placeholder="License Key" />
+              <Field label="Tracking License Key" type="password" value={formData.tracking_license_key} onChange={(v) => setField('tracking_license_key', v)} placeholder="Tracking License Key" />
               <Field label="Vendor Code" value={formData.vendor_code} onChange={(v) => setField('vendor_code', v)} placeholder="Vendor Code" />
               <Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} placeholder="Origin Area" />
               <Field label="Customer Code (Pre-Paid)" value={formData.customer_code_prepaid} onChange={(v) => setField('customer_code_prepaid', v)} placeholder="Pre-Paid Customer Code" />
@@ -912,23 +833,23 @@ const CourierSettings = () => {
       </>
     );
 
-    if (code === 'DELHIVERY') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Delhivery Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} placeholder={securePlaceholder('')} /><Field label="Client Name / Client Number" value={formData.client_name_number} onChange={(v) => setField('client_name_number', v)} /><Field label="Warehouse Name" required value={formData.warehouse_name} onChange={(v) => setField('warehouse_name', v)} /><Field label="Warehouse Pincode" required value={formData.warehouse_pincode} onChange={(v) => setField('warehouse_pincode', v.replace(/\D/g, '').slice(0, 6))} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Express']} /><Field label="Seller GSTIN" value={formData.seller_gstin} onChange={(v) => setField('seller_gstin', v)} /></div></div>;
+    if (code === 'DELHIVERY') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Delhivery Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} /><Field label="Client Name / Client Number" value={formData.client_name_number} onChange={(v) => setField('client_name_number', v)} /><Field label="Warehouse Name" required value={formData.warehouse_name} onChange={(v) => setField('warehouse_name', v)} /><Field label="Warehouse Pincode" required value={formData.warehouse_pincode} onChange={(v) => setField('warehouse_pincode', v.replace(/\D/g, '').slice(0, 6))} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Express']} /><Field label="Seller GSTIN" value={formData.seller_gstin} onChange={(v) => setField('seller_gstin', v)} /></div></div>;
 
-    if (code === 'XPRESSBEES') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Xpressbees Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API User Email" required value={formData.api_user_email} onChange={(v) => setField('api_user_email', v)} /><Field label="API User Password" required type="password" value={formData.api_user_password} onChange={(v) => setField('api_user_password', v)} placeholder={securePlaceholder('')} /><Field label="Secret Key" required type="password" value={formData.secret_key} onChange={(v) => setField('secret_key', v)} placeholder={securePlaceholder('')} /><Field label="Channel ID" value={formData.channel_id} onChange={(v) => setField('channel_id', v)} /><Field label="Default Pickup Pincode" value={formData.default_pickup_pincode} onChange={(v) => setField('default_pickup_pincode', v.replace(/\D/g, '').slice(0, 6))} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Air']} /></div></div>;
+    if (code === 'XPRESSBEES') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Xpressbees Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API User Email" required value={formData.api_user_email} onChange={(v) => setField('api_user_email', v)} /><Field label="API User Password" required type="password" value={formData.api_user_password} onChange={(v) => setField('api_user_password', v)} /><Field label="Secret Key" required type="password" value={formData.secret_key} onChange={(v) => setField('secret_key', v)} /><Field label="Channel ID" value={formData.channel_id} onChange={(v) => setField('channel_id', v)} /><Field label="Default Pickup Pincode" value={formData.default_pickup_pincode} onChange={(v) => setField('default_pickup_pincode', v.replace(/\D/g, '').slice(0, 6))} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Air']} /></div></div>;
 
-    if (code === 'DTDC') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">DTDC Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API Key" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} placeholder={securePlaceholder('')} /><Field label="X-Access-Token" required type="password" value={formData.x_access_token} onChange={(v) => setField('x_access_token', v)} placeholder={securePlaceholder('')} /><Field label="Customer Code" required value={formData.customer_code} onChange={(v) => setField('customer_code', v)} /><Field label="Username" value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" type="password" value={formData.password} onChange={(v) => setField('password', v)} placeholder={securePlaceholder('')} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Domestic Express (PTP)', 'B2C Priority', 'Heavy Shipment']} /></div></div>;
+    if (code === 'DTDC') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">DTDC Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="API Key" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} /><Field label="X-Access-Token" required type="password" value={formData.x_access_token} onChange={(v) => setField('x_access_token', v)} /><Field label="Customer Code" required value={formData.customer_code} onChange={(v) => setField('customer_code', v)} /><Field label="Username" value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" type="password" value={formData.password} onChange={(v) => setField('password', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Domestic Express (PTP)', 'B2C Priority', 'Heavy Shipment']} /></div></div>;
 
-    if (code === 'SHREE_MARUTI') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Shree Maruti Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} placeholder={securePlaceholder('')} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Air', 'Surface']} /><SelectField label="Hand Over Mode" value={formData.hand_over_mode} onChange={(v) => setField('hand_over_mode', v)} options={['Drop', 'Pickup', 'Pick']} /></div></div>;
+    if (code === 'SHREE_MARUTI') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Shree Maruti Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Air', 'Surface']} /><SelectField label="Hand Over Mode" value={formData.hand_over_mode} onChange={(v) => setField('hand_over_mode', v)} options={['Drop', 'Pickup', 'Pick']} /></div></div>;
 
-    if (code === 'TRACKON') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Trackon Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="API Key / Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} placeholder={securePlaceholder('')} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Air']} /></div></div>;
+    if (code === 'TRACKON') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Trackon Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="API Key / Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Surface', 'Air']} /></div></div>;
 
-    if (code === 'ECOM_EXPRESS') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Ecom Express Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} placeholder={securePlaceholder('')} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['EXPP Express', 'ESCP Surface']} /></div></div>;
+    if (code === 'ECOM_EXPRESS') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Ecom Express Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['EXPP Express', 'ESCP Surface']} /></div></div>;
 
-    if (code === 'EKART') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Ekart Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Merchant Code" required value={formData.merchant_code} onChange={(v) => setField('merchant_code', v)} /><Field label="Authorization header" required type="password" value={formData.authorization_header} onChange={(v) => setField('authorization_header', v)} placeholder={securePlaceholder('')} /><SelectField label="Service Code" value={formData.service_code} onChange={(v) => setField('service_code', v)} options={['Regular', 'Economy']} /><Field label="Reverse Service Code" value={formData.reverse_service_code} onChange={(v) => setField('reverse_service_code', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /></div><CheckField label="Live mode" checked={formData.live_mode} onChange={(v) => setField('live_mode', v)} /></div>;
+    if (code === 'EKART') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Ekart Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Merchant Code" required value={formData.merchant_code} onChange={(v) => setField('merchant_code', v)} /><Field label="Authorization header" required type="password" value={formData.authorization_header} onChange={(v) => setField('authorization_header', v)} /><SelectField label="Service Code" value={formData.service_code} onChange={(v) => setField('service_code', v)} options={['Regular', 'Economy']} /><Field label="Reverse Service Code" value={formData.reverse_service_code} onChange={(v) => setField('reverse_service_code', v)} /><Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /></div><CheckField label="Live mode" checked={formData.live_mode} onChange={(v) => setField('live_mode', v)} /></div>;
 
-    if (code === 'SHADOWFAX') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Shadowfax Credentials</h4>{simpleCommon}<div className="space-y-4"><SelectField label="Authentication Mode" value={formData.authentication_mode} onChange={(v) => setField('authentication_mode', v)} options={[{ value: 'TOKEN', label: 'Token Auth' }, { value: 'OAUTH2', label: 'OAuth2' }]} />{formData.authentication_mode === 'TOKEN' ? <Field label="API Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} placeholder={securePlaceholder('')} /> : <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Client ID" required value={formData.client_id} onChange={(v) => setField('client_id', v)} /><Field label="Client Secret" required type="password" value={formData.client_secret} onChange={(v) => setField('client_secret', v)} placeholder={securePlaceholder('')} /></div>}<Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /></div></div>;
+    if (code === 'SHADOWFAX') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">Shadowfax Credentials</h4>{simpleCommon}<div className="space-y-4"><SelectField label="Authentication Mode" value={formData.authentication_mode} onChange={(v) => setField('authentication_mode', v)} options={[{ value: 'TOKEN', label: 'Token Auth' }, { value: 'OAUTH2', label: 'OAuth2' }]} />{formData.authentication_mode === 'TOKEN' ? <Field label="API Token" required type="password" value={formData.api_token} onChange={(v) => setField('api_token', v)} /> : <div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Client ID" required value={formData.client_id} onChange={(v) => setField('client_id', v)} /><Field label="Client Secret" required type="password" value={formData.client_secret} onChange={(v) => setField('client_secret', v)} /></div>}<Field label="Origin Area" value={formData.origin_area} onChange={(v) => setField('origin_area', v)} /></div></div>;
 
-    if (code === 'INDIA_POST') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">India Post Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} placeholder={securePlaceholder('')} /><Field label="Customer ID" required value={formData.customer_id} onChange={(v) => setField('customer_id', v)} /><Field label="Bulk Customer Contract Number" required value={formData.bulk_customer_contract_number} onChange={(v) => setField('bulk_customer_contract_number', v)} /><Field label="Booking Office ID" value={formData.booking_office_id} onChange={(v) => setField('booking_office_id', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Speed Post', 'Business Parcel', 'Registered Letter', 'Registered Parcel']} /><Field label="Whitelisted Public IP" value={formData.whitelisted_public_ip} onChange={(v) => setField('whitelisted_public_ip', v)} /></div></div>;
+    if (code === 'INDIA_POST') return <div className="space-y-7"><h4 className="text-lg font-bold text-main">India Post Credentials</h4>{simpleCommon}<div className="grid grid-cols-1 md:grid-cols-2 gap-4"><Field label="Username" required value={formData.username} onChange={(v) => setField('username', v)} /><Field label="Password" required type="password" value={formData.password} onChange={(v) => setField('password', v)} /><Field label="Customer ID" required value={formData.customer_id} onChange={(v) => setField('customer_id', v)} /><Field label="Bulk Customer Contract Number" required value={formData.bulk_customer_contract_number} onChange={(v) => setField('bulk_customer_contract_number', v)} /><Field label="Booking Office ID" value={formData.booking_office_id} onChange={(v) => setField('booking_office_id', v)} /><SelectField label="Service Type" value={formData.service_type} onChange={(v) => setField('service_type', v)} options={['Speed Post', 'Business Parcel', 'Registered Letter', 'Registered Parcel']} /><Field label="Whitelisted Public IP" value={formData.whitelisted_public_ip} onChange={(v) => setField('whitelisted_public_ip', v)} /></div></div>;
 
     return <div className="rounded-xl border border-border p-5 text-sm text-muted">No credential form is defined for this courier yet.</div>;
   };
@@ -1265,7 +1186,11 @@ const CourierSettings = () => {
                 <div
                   key={c.id}
                   className="bg-surface-light rounded-2xl border border-main p-4 hover:border-primary/40 transition-all cursor-pointer flex items-center justify-between group"
-                  onClick={() => openCarrierWizard(c)}
+                  onClick={() => {
+                    setSelectedCarrier(c);
+                    setWizardStep(2);
+                    setShowWizard(true);
+                  }}
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center font-bold text-primary text-sm flex-shrink-0">
@@ -1319,8 +1244,8 @@ const CourierSettings = () => {
                     </div>
                   )}
                   <div>
-                    <h3 className="text-lg font-bold text-main">{selectedCarrier ? `${editingCourierId ? 'Edit' : 'Add'} ${selectedCarrier.name} Credentials` : 'Add Courier'}</h3>
-                    <p className="text-sm text-muted mt-1">{selectedCarrier ? (editingCourierId ? `Editing the saved ${selectedCarrier.name} profile. Secret fields are left blank — leave them blank to keep the saved value, or retype to replace it.` : `Configure ${selectedCarrier.name} without unrelated credential fields.`) : 'Select a courier partner to continue.'}</p>
+                    <h3 className="text-lg font-bold text-main">{selectedCarrier ? `Add ${selectedCarrier.name} Credentials` : 'Add Courier'}</h3>
+                    <p className="text-sm text-muted mt-1">{selectedCarrier ? `Configure ${selectedCarrier.name} without unrelated credential fields.` : 'Select a courier partner to continue.'}</p>
                   </div>
                 </div>
                 <button type="button" onClick={resetWizard} className="text-sm text-muted hover:text-main px-2 py-1 -mr-2">Close</button>
@@ -1386,7 +1311,7 @@ const CourierSettings = () => {
                       disabled={loading}
                       className="px-5 py-2.5 bg-primary text-background rounded-lg text-sm font-bold hover:shadow-neon disabled:opacity-40 transition-all"
                     >
-                      {loading ? 'Saving…' : (editingCourierId ? 'Update Credentials' : 'Save Credentials')}
+                      {loading ? 'Saving…' : 'Save Credentials'}
                     </button>
                   </div>
                 </div>
